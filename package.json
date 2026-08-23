@@ -1,0 +1,10 @@
+{
+  "name": "opencode-harness-viz",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "用真实 opencode 二进制实时可视化其 harness(agentic loop) 内部流程",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}
