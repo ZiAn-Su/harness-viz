@@ -20,11 +20,40 @@
 | Node.js ≥ 18 | 运行 server.mjs（无需任何 npm 依赖） |
 | opencode CLI | [opencode.ai](https://opencode.ai)，全局安装即可，**你的日常使用不受影响** |
 | codex CLI ≥ 0.147 | `npm i -g @openai/codex`；仅 codex 模式需要 |
-| `MINIMAX_API_KEY` 环境变量 | [MiniMax 开放平台](https://platform.minimaxi.com) 申请；两个 harness 的模型请求都经本地代理转发到 MiniMax |
+| 模型凭据 | 二选一：`MINIMAX_API_KEY` 环境变量（默认配置，[MiniMax 开放平台](https://platform.minimaxi.com)申请）；或 codex 的 ChatGPT 登录 / `OPENAI_API_KEY`（`viz.config.json` 设 `codex.useDefaultModel=true`，无需 MiniMax）；opencode 也可按上文换任意 Anthropic 兼容 provider |
 
 > 默认模型 `MiniMax-M3`（Anthropic 兼容端点）。想换其他 provider/模型：改 `data/models.json`
 > （opencode）或 `data/codex-home/config.toml` 由 server 启动时重建（codex，见 server.mjs 的
 > `CODEX_CONFIG`）——翻译代理的目标端点在 server.mjs 的 `LLM_UPSTREAM`。
+
+### 配置自己的模型（viz.config.json，可选）
+
+运行时**不需要**任何源码——只依赖全局安装的 opencode / codex CLI 二进制。模型配置集中在
+`viz.config.json`（仓库自带默认值 = MiniMax 抓包模式）：
+
+```jsonc
+{
+  "upstream": "https://api.minimaxi.com",   // 翻译代理转发的 Anthropic 兼容上游
+  "upstreamEnvKey": "MINIMAX_API_KEY",      // 代理转发时读的环境变量名（值不落盘）
+  "codex": {
+    "useDefaultModel": false,               // true = codex 用自带默认模型（ChatGPT 登录/OPENAI_API_KEY）
+    "model": "MiniMax-M3"
+  },
+  "opencode": { "model": "minimax-cn-coding-plan/MiniMax-M3" }
+}
+```
+
+- **codex 最简用法**：把 `codex.useDefaultModel` 改为 `true`——直接用 codex 自带的默认模型
+  （ChatGPT 登录态会从 `~/.codex/auth.json` **复制**进隔离目录，绝不动原文件；或设
+  `OPENAI_API_KEY`）。此时流量不经过代理，**无提示词捕获**（界面徽标会标明），其余可视化全部可用。
+- **codex 走代理抓包**：保持 `false`，`model` 换成任意名（元数据警告可忽略），`upstream` 换成
+  任意 **Anthropic 兼容** 端点，`upstreamEnvKey` 换成对应密钥的环境变量名。
+- **opencode 换模型/Provider**：编辑 `data/models.json`——它就是 opencode 的 provider 定义，
+  每个 provider 的 `api` 已指向本地代理 `http://127.0.0.1:45322/anthropic/v1`；新增 provider =
+  照抄现有结构改 `id/name/api(保留指向代理)/models`，再把 `viz.config.json` 的
+  `opencode.model` 指到 `providerID/modelID`（页面下拉默认选中它）。代理按 `upstream` 转发，
+  所以**所有 provider 共用同一个上游**——需要多上游时改 `server.mjs` 的 `LLM_UPSTREAM` 为按
+  路径分发即可。
 
 ## 快速开始
 

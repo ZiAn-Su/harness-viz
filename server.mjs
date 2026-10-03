@@ -47,29 +47,54 @@ const OC_PORT = Number(process.env.OC_PORT ?? 45321)    // opencode serve
 const LLM_PORT = Number(process.env.LLM_PORT ?? 45322)  // LLM 代理
 const HOST = "127.0.0.1"
 const OC_BASE = `http://${HOST}:${OC_PORT}`
-const LLM_UPSTREAM = process.env.LLM_UPSTREAM ?? "https://api.minimaxi.com"
 const OC_PASSWORD = "viz-local-secret"
 const AUTH = "Basic " + Buffer.from(`opencode:${OC_PASSWORD}`).toString("base64")
+
+/* ── 用户配置 viz.config.json（可选；缺省 = MiniMax 抓包模式） ──
+ * {
+ *   "upstream":       翻译代理转发的 Anthropic 兼容上游（默认 MiniMax），
+ *   "upstreamEnvKey": 代理转发时使用的环境变量名（其值绝不落盘），
+ *   "codex": { "useDefaultModel": true 则 codex 用自带默认模型（ChatGPT 登录/OPENAI_API_KEY），
+ *              绕过代理 → 无提示词捕获；false 则走代理 + model 指定模型名 },
+ *   "opencode": { "model": "providerID/modelID"，需与 data/models.json 里的条目对应 }
+ * } */
+let CFG = { upstream: "https://api.minimaxi.com", upstreamEnvKey: "MINIMAX_API_KEY", codex: { useDefaultModel: false, model: "MiniMax-M3" }, opencode: { model: "minimax-cn-coding-plan/MiniMax-M3" } }
+try { CFG = { ...CFG, ...JSON.parse(await readFile(path.join(ROOT, "viz.config.json"), "utf8")) } } catch {}
+const LLM_UPSTREAM = process.env.LLM_UPSTREAM ?? CFG.upstream
 
 let child = null
 let ocReady = false
 let codexProc = null   // codex exec 子进程（每次运行一个）
 
-/* ── codex 隔离：CODEX_HOME 指向 data/codex-home，config.toml 把模型请求引到本代理 ── */
+/* ── codex 隔离：CODEX_HOME 指向 data/codex-home ──
+ * useDefaultModel=false：config.toml 注册自定义 provider 把模型请求引到本代理（可捕获提示词）；
+ * useDefaultModel=true：不写 model_provider，codex 直接用自带默认模型（ChatGPT 登录或
+ * OPENAI_API_KEY），流量不经代理 → 无 LLM 捕获，但开箱即用。 */
 const CODEX_HOME = path.join(DATA_DIR, "codex-home")
-const CODEX_CONFIG = `model = "MiniMax-M3"
+const CODEX_CONFIG = CFG.codex.useDefaultModel
+  ? `model = "${CFG.codex.model}"\n`
+  : `model = "${CFG.codex.model}"
 model_provider = "viz"
 
 [model_providers.viz]
 name = "viz-proxy"
 base_url = "http://${HOST}:${LLM_PORT}/v1"
-env_key = "MINIMAX_API_KEY"
+${CFG.upstreamEnvKey ? `env_key = "${CFG.upstreamEnvKey}"` : ""}
 wire_api = "responses"
 `
 async function ensureCodexHome() {
   const { mkdir } = await import("node:fs/promises")
   await mkdir(CODEX_HOME, { recursive: true })
   await writeFile(path.join(CODEX_HOME, "config.toml"), CODEX_CONFIG)
+  /* useDefaultModel 时还要把用户的 ChatGPT 登录态复制进来（只拷贝，绝不动原文件），
+   * 否则隔离 CODEX_HOME 里没有凭据，codex 会要求登录。 */
+  if (CFG.codex.useDefaultModel) {
+    const userHome = path.join(process.env.USERPROFILE ?? "", ".codex")
+    for (const f of ["auth.json"]) {
+      const src = path.join(userHome, f)
+      try { await writeFile(path.join(CODEX_HOME, f), await readFile(src)) } catch {}
+    }
+  }
   /* exec 模式审批=Never（exec/src/lib.rs:413），execpolicy 判定 Prompt 的命令会被
    * 直接拒绝（core/src/exec_policy.rs:214 prompt_is_rejected_by_policy → :1046
    * "blocked by policy"）。codex 在 Windows 上用 powershell -Command 包命令，
@@ -343,7 +368,7 @@ function runCodex(prompt) {
     "exec", "--json", "--skip-git-repo-check",
     "-C", TARGET_PROJECT,
     "-s", "workspace-write",
-    "-m", "MiniMax-M3",
+    "-m", CFG.codex.model,
     prompt,
   ]
   const env = { ...process.env, CODEX_HOME }
@@ -603,7 +628,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/status") {
-      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: "MiniMax-M3" })
+      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: CFG.codex.model, codexCapture: !CFG.codex.useDefaultModel, ocModel: CFG.opencode.model })
       return
     }
 

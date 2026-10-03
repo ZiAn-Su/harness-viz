@@ -1250,12 +1250,12 @@ makeResizable("rz2", "--w-right", true)
 
 async function init() {
   const status = await (await fetch("/api/status")).json()
-  document.getElementById("codexModelBadge").textContent = "模型: " + (status.codexModel ?? "?") + "（codex 固定）"
+  document.getElementById("codexModelBadge").textContent = "模型: " + (status.codexModel ?? "?") + (status.codexCapture ? "（codex 固定 · 经代理捕获）" : "（codex 自带默认 · 无捕获）")
   const { models } = await (await fetch("/api/models")).json()
   const sel = document.getElementById("modelSel")
   for (const m of models) {
     const o = document.createElement("option"); o.value = m.value; o.textContent = m.label
-    if (m.value === "minimax-cn-coding-plan/MiniMax-M3") o.selected = true
+    if (m.value === (status.ocModel ?? "minimax-cn-coding-plan/MiniMax-M3")) o.selected = true
     sel.appendChild(o)
   }
   /* 刷新恢复：回放服务端内存里的上次运行事件（重启 server 后即为空） */
