@@ -4,3 +4,4 @@ data/events.jsonl
 data/*.log
 data/msgs.json
 data/run*.json
+data/codex-home/

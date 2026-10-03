@@ -8,14 +8,21 @@
  *     每次调用的 system prompt / messages / tools / 响应 / 耗时，再原样转发到
  *     真实 MiniMax 端点（https://api.minimaxi.com/anthropic/v1）。
  *  3. 浏览器桥（端口 4577）：
- *     - POST /api/run        → 建会话 + 发提示词
- *     - GET  /api/stream     → SSE：opencode /global/event 事件 + LLM 调用事件
+ *     - POST /api/run        → 建会话 + 发提示词（harness=opencode|codex）
+ *     - GET  /api/stream     → SSE：事件流 + LLM 调用事件（每条带 harness 字段）
  *     - GET  /api/llm-calls  → 已捕获的模型调用明细（完整提示词 + 完整响应）
- *     - GET  /api/last-run   → 上次运行的全部事件（刷新页面后回放恢复现场）
- *     - POST /api/permission → 回答权限询问
- *     - POST /api/abort      → 中断会话
+ *     - GET  /api/last-run?harness= → 上次运行的全部事件（刷新页面后回放恢复现场）
+ *     - POST /api/permission → 回答权限询问（仅 opencode）
+ *     - POST /api/abort      → 中断（opencode: 会话 abort；codex: 杀 exec 进程）
  *     - GET  /api/models     → 可选模型列表
  *     - GET  /               → index.html
+ *
+ * codex 模式：
+ *  - 每次运行 spawn `codex exec --json`（CODEX_HOME 隔离到 data/codex-home，
+ *    沙箱 workspace-write，审批策略 Never —— exec/src/lib.rs:413）。
+ *  - codex 只支持 Responses API（wire_api=chat 已于 0.147.0 移除），其模型请求
+ *    被引导到本代理的 /v1/responses，由我们翻译成 Anthropic Messages 调用上游
+ *    MiniMax，再把 Anthropic SSE 翻译回 Responses SSE（翻译规则见下方注释）。
  */
 import { spawn } from "node:child_process"
 import { createServer } from "node:http"
@@ -46,6 +53,34 @@ const AUTH = "Basic " + Buffer.from(`opencode:${OC_PASSWORD}`).toString("base64"
 
 let child = null
 let ocReady = false
+let codexProc = null   // codex exec 子进程（每次运行一个）
+
+/* ── codex 隔离：CODEX_HOME 指向 data/codex-home，config.toml 把模型请求引到本代理 ── */
+const CODEX_HOME = path.join(DATA_DIR, "codex-home")
+const CODEX_CONFIG = `model = "MiniMax-M3"
+model_provider = "viz"
+
+[model_providers.viz]
+name = "viz-proxy"
+base_url = "http://${HOST}:${LLM_PORT}/v1"
+env_key = "MINIMAX_API_KEY"
+wire_api = "responses"
+`
+async function ensureCodexHome() {
+  const { mkdir } = await import("node:fs/promises")
+  await mkdir(CODEX_HOME, { recursive: true })
+  await writeFile(path.join(CODEX_HOME, "config.toml"), CODEX_CONFIG)
+  /* exec 模式审批=Never（exec/src/lib.rs:413），execpolicy 判定 Prompt 的命令会被
+   * 直接拒绝（core/src/exec_policy.rs:214 prompt_is_rejected_by_policy → :1046
+   * "blocked by policy"）。codex 在 Windows 上用 powershell -Command 包命令，
+   * 默认规则匹配不到 → Prompt → 全被拒。故在隔离 CODEX_HOME 里放一份放行规则
+   * （加载路径：exec_policy.rs:827 → $CODEX_HOME/rules/default.rules）。 */
+  await mkdir(path.join(CODEX_HOME, "rules"), { recursive: true })
+  await writeFile(path.join(CODEX_HOME, "rules", "default.rules"), `prefix_rule(pattern=["powershell.exe"], decision="allow")
+prefix_rule(pattern=["powershell"], decision="allow")
+prefix_rule(pattern=["C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe"], decision="allow")
+`)
+}
 
 /* ── LLM 调用捕获 ─────────────────────────────────────── */
 const llmCalls = []        // {index,startedAt,endedAt,ms,model,path,request,response,error}
@@ -54,19 +89,21 @@ let llmIndex = 0
 /* ── 本地 SSE 广播（浏览器订阅 /api/stream） ─────────────── */
 const sseClients = new Set()
 const EVENT_LOG = path.join(DATA_DIR, "events.jsonl")
-/* 上次运行的完整事件（内存保存：刷新页面可回放恢复，重启即清） */
-let lastRun = { sessionID: null, events: [] }
+/* 上次运行的完整事件（内存保存：刷新页面可回放恢复，重启即清）。每个 harness 独立一份 */
+const runs = { opencode: { sessionID: null, events: [] }, codex: { sessionID: null, events: [] } }
 function broadcast(payload) {
+  if (!payload.harness) payload.harness = "opencode"
   const line = `data: ${JSON.stringify(payload)}\n\n`
   for (const res of sseClients) {
     try { res.write(line) } catch {}
   }
   // 落盘一份，方便事后排查（无需再用 curl 抓流）
   appendFile(EVENT_LOG, JSON.stringify({ t: Date.now(), ...payload }) + "\n").catch(() => {})
-  // 记入“上次运行”（心跳除外），供刷新后回放
+  // 记入对应 harness 的“上次运行”（心跳除外），供刷新/切换后回放
   if (payload.type !== "server.heartbeat") {
-    lastRun.events.push(payload)
-    if (lastRun.events.length > 40000) lastRun.events.splice(0, lastRun.events.length - 40000)
+    const run = runs[payload.harness] ?? runs.opencode
+    run.events.push(payload)
+    if (run.events.length > 40000) run.events.splice(0, run.events.length - 40000)
   }
 }
 
@@ -175,10 +212,14 @@ const llmProxy = createServer(async (req, res) => {
   let bodyJson = null
   try { bodyJson = JSON.parse(raw.toString("utf8")) } catch {}
 
+  /* codex 只讲 Responses API（POST /v1/responses）——单独处理：捕获 + 翻译成 Anthropic 调上游 */
+  if ((req.url ?? "").startsWith("/v1/responses")) return handleCodexResponses(req, res, raw, bodyJson, startedAt, index)
+
   const call = {
     index,
     startedAt,
     path: req.url,
+    harness: "opencode",
     model: bodyJson?.model ?? null,
     request: bodyJson,          // {model, system, messages[], tools[], max_tokens, stream...}
     response: null,
@@ -286,6 +327,260 @@ function parseAnthropicSSE(raw) {
   return out
 }
 
+/* ═══════════════ codex：codex exec --json 拉起 + 事件解析 ═══════════════ */
+/* 源码依据：exec/src/lib.rs:246 run_main；--json 输出 ThreadEvent JSONL
+ * （exec/src/exec_events.rs:11：thread.started / turn.started / item.started /
+ *  item.updated / item.completed / turn.completed / turn.failed / error）。
+ * 审批策略在 exec 模式下固定为 Never（exec/src/lib.rs:413），沙箱由 -s 指定。 */
+function runCodex(prompt) {
+  if (codexProc) { try { codexProc.kill() } catch {} }
+  /* 直接 node 跑 codex 启动器，不走 shell:true —— cmd 的引号/特殊字符解析会把
+   * 中文长 prompt 拆坏（实测 exit code 2 用法错误）。 */
+  const codexJs = process.env.CODEX_CLI_JS
+    ?? path.join(process.env.APPDATA ?? "", "npm", "node_modules", "@openai", "codex", "bin", "codex.js")
+  const args = [
+    codexJs,
+    "exec", "--json", "--skip-git-repo-check",
+    "-C", TARGET_PROJECT,
+    "-s", "workspace-write",
+    "-m", "MiniMax-M3",
+    prompt,
+  ]
+  const env = { ...process.env, CODEX_HOME }
+  codexProc = spawn(process.execPath, args, { env, cwd: TARGET_PROJECT, stdio: ["ignore", "pipe", "pipe"] })
+  const proc = codexProc
+  broadcast({ id: `cx-start-${Date.now()}`, harness: "codex", type: "codex.proc.start", properties: { cmd: "codex " + args.slice(1, -1).join(" ") } })
+  console.log(`[codex] spawn exec (pid=${proc.pid})`)
+
+  let buf = ""
+  proc.stdout.on("data", (d) => {
+    buf += d.toString("utf8")
+    let idx
+    while ((idx = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, idx).trim()
+      buf = buf.slice(idx + 1)
+      if (!line) continue
+      let evt
+      try { evt = JSON.parse(line) } catch { console.log("[codex:stdout]", line.slice(0, 200)); continue }
+      if (evt.type === "thread.started" && evt.thread_id) runs.codex.sessionID = evt.thread_id
+      broadcast({ id: `cx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, harness: "codex", type: "codex." + evt.type, properties: evt })
+    }
+  })
+  let errBuf = ""
+  proc.stderr.on("data", (d) => { errBuf += d.toString("utf8"); process.stdout.write(`[codex:err] ${d}`) })
+  proc.on("exit", (code, signal) => {
+    if (codexProc === proc) codexProc = null
+    console.log(`[codex] 进程退出 code=${code} signal=${signal}`)
+    broadcast({ id: `cx-exit-${Date.now()}`, harness: "codex", type: "codex.proc.exit",
+      properties: { code, signal, stderrTail: errBuf.trim().split("\n").slice(-5).join("\n") } })
+  })
+}
+
+/* ═══════════════ codex：Responses API → Anthropic Messages 翻译 ═══════════════ */
+/* 请求契约（codex-api/src/common.rs:252 ResponsesApiRequest）：
+ *   {model, instructions, input:[ResponseItem], tools, tool_choice:"auto",
+ *    parallel_tool_calls, reasoning, store:false, stream:true, include, ...}
+ * ResponseItem 线上形态（protocol/src/models.rs:950）：
+ *   message {type:"message", role, content:[{type:"input_text"|"output_text", text}]}
+ *   function_call {type:"function_call", name, arguments:<JSON 字符串>, call_id}
+ *   function_call_output {type:"function_call_output", call_id, output:<字符串或对象>}
+ *   reasoning / custom_tool_call 等。
+ * 翻译目标：Anthropic Messages（model/system/messages/tools/stream）。 */
+function responsesToAnthropic(body, customTools) {
+  const messages = []
+  const push = (role, block) => {
+    const last = messages[messages.length - 1]
+    if (last && last.role === role) last.content.push(block)
+    else messages.push({ role, content: [block] })
+  }
+  for (const item of body.input ?? []) {
+    if (item.type === "message") {
+      const role = item.role === "assistant" ? "assistant" : "user"
+      for (const c of item.content ?? []) {
+        if (c.type === "input_text" || c.type === "output_text") push(role, { type: "text", text: c.text ?? "" })
+        else push(role, { type: "text", text: `[${c.type}]` })
+      }
+    } else if (item.type === "function_call") {
+      let input
+      try { input = JSON.parse(item.arguments || "{}") } catch { input = { _raw: item.arguments } }
+      push("assistant", { type: "tool_use", id: item.call_id, name: item.name, input })
+    } else if (item.type === "custom_tool_call") {
+      push("assistant", { type: "tool_use", id: item.call_id, name: item.name, input: { input: item.input ?? "" } })
+    } else if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
+      let out = item.output
+      if (out && typeof out === "object") out = out.content ?? JSON.stringify(out)
+      push("user", { type: "tool_result", tool_use_id: item.call_id, content: typeof out === "string" ? out : JSON.stringify(out) })
+    }
+    /* reasoning 摘要不回灌：对模型无增量信息，且 Anthropic 拒收无签名的 thinking 块 */
+  }
+  if (!messages.length) messages.push({ role: "user", content: [{ type: "text", text: "(空输入)" }] })
+  if (messages[0].role !== "user") messages.unshift({ role: "user", content: [{ type: "text", text: "(会话开始)" }] })
+  const tools = (body.tools ?? [])
+    .filter((t) => t.type === "function" || t.type === "custom")
+    .map((t) => {
+      if (t.type === "custom") customTools.add(t.name)
+      return {
+        name: t.name,
+        description: t.description ?? "",
+        input_schema: t.type === "custom"
+          ? { type: "object", properties: { input: { type: "string", description: "自由文本入参" } }, required: ["input"] }
+          : (t.parameters ?? { type: "object", properties: {} }),
+      }
+    })
+  return {
+    model: body.model,
+    system: body.instructions || undefined,
+    messages,
+    tools: tools.length ? tools : undefined,
+    tool_choice: tools.length ? { type: "auto" } : undefined,
+    max_tokens: 16384,
+    stream: true,
+  }
+}
+
+/** Anthropic SSE → Responses SSE 实时翻译转发，同时把原始流交给 parseAnthropicSSE 捕获。
+ *  codex 消费的最小事件契约（codex-api/src/sse/responses.rs:348 process_responses_event）：
+ *   response.created(:403) → output_item.added(:482) → output_text.delta(:360) →
+ *   output_item.done(:352，触发工具执行 stream_events_utils.rs:289) →
+ *   response.completed(:464，缺失则报 "stream closed before response.completed") */
+async function handleCodexResponses(req, res, raw, bodyJson, startedAt, index) {
+  const customTools = new Set()
+  const call = {
+    index, startedAt, path: req.url, harness: "codex",
+    model: bodyJson?.model ?? null,
+    request: bodyJson,       // Responses 原始请求（完整捕获：instructions/input/tools）
+    anthropicRequest: null,  // 翻译后的 Anthropic 请求（供对照）
+    response: null, error: null, ms: null,
+  }
+  llmCalls.push(call)
+  broadcast({
+    id: `llm-${index}-req`, harness: "codex", type: "llm.request",
+    properties: {
+      index, model: call.model,
+      systemChars: (bodyJson?.instructions ?? "").length,
+      messages: Array.isArray(bodyJson?.input) ? bodyJson.input.length : 0,
+      tools: (bodyJson?.tools ?? []).map((t) => t.name ?? t.type),
+      stream: Boolean(bodyJson?.stream),
+    },
+  })
+  console.log(`[llm] #${index} (codex) → ${call.model}  input=${bodyJson?.input?.length ?? "?"} tools=${bodyJson?.tools?.length ?? 0}`)
+
+  const sse = (type, obj) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...obj })}\n\n`)
+  const respId = `resp_viz_${index}`
+  try {
+    const anthropicReq = responsesToAnthropic(bodyJson ?? {}, customTools)
+    call.anthropicRequest = anthropicReq
+    const KEY = process.env.MINIMAX_API_KEY ?? ""
+    const upstream = await fetch(LLM_UPSTREAM + "/anthropic/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": KEY,
+        Authorization: `Bearer ${KEY}`,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(anthropicReq),
+    })
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => "")
+      throw new Error(`上游 HTTP ${upstream.status}: ${text.slice(0, 400)}`)
+    }
+
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" })
+    res.flushHeaders()
+    sse("response.created", { response: { id: respId, status: "in_progress", model: call.model } })
+
+    let captured = ""
+    const decoder = new TextDecoder()
+    let buf = ""
+    const blocks = {}   // content_block index → {kind,itemId,name,callId,text,argsJson}
+    let usage = {}
+    const handleEvent = (evt) => {
+      if (evt.type === "message_start") {
+        if (evt.message?.usage) usage = { ...usage, ...evt.message.usage }
+      } else if (evt.type === "content_block_start") {
+        const i = evt.index, b = evt.content_block ?? {}
+        if (b.type === "text") {
+          blocks[i] = { kind: "text", itemId: `msg_${index}_${i}`, text: "" }
+          sse("response.output_item.added", { item: { type: "message", id: blocks[i].itemId, role: "assistant", status: "in_progress", content: [] } })
+        } else if (b.type === "tool_use") {
+          blocks[i] = { kind: "tool", name: b.name, callId: b.id, argsJson: "" }
+          const item = customTools.has(b.name)
+            ? { type: "custom_tool_call", id: b.id, call_id: b.id, name: b.name, input: "" }
+            : { type: "function_call", id: b.id, call_id: b.id, name: b.name, arguments: "" }
+          sse("response.output_item.added", { item })
+        }
+      } else if (evt.type === "content_block_delta") {
+        const b = blocks[evt.index]
+        if (!b) return
+        if (evt.delta?.type === "text_delta") {
+          b.text += evt.delta.text ?? ""
+          sse("response.output_text.delta", { item_id: b.itemId, delta: evt.delta.text ?? "" })
+        } else if (evt.delta?.type === "input_json_delta") {
+          b.argsJson += evt.delta.partial_json ?? ""
+        }
+      } else if (evt.type === "content_block_stop") {
+        const b = blocks[evt.index]
+        if (!b) return
+        if (b.kind === "text") {
+          sse("response.output_item.done", { item: { type: "message", id: b.itemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: b.text }] } })
+        } else {
+          if (customTools.has(b.name)) {
+            let input = b.argsJson
+            try { const o = JSON.parse(b.argsJson || "{}"); input = typeof o.input === "string" ? o.input : JSON.stringify(o) } catch {}
+            sse("response.output_item.done", { item: { type: "custom_tool_call", id: b.callId, call_id: b.callId, name: b.name, input } })
+          } else {
+            sse("response.output_item.done", { item: { type: "function_call", id: b.callId, call_id: b.callId, name: b.name, arguments: b.argsJson || "{}" } })
+          }
+        }
+      } else if (evt.type === "message_delta") {
+        if (evt.usage) usage = { ...usage, ...evt.usage }
+      } else if (evt.type === "message_stop") {
+        const input_tokens = usage.input_tokens ?? 0, output_tokens = usage.output_tokens ?? 0
+        sse("response.completed", { response: { id: respId, status: "completed", usage: { input_tokens, output_tokens, total_tokens: input_tokens + output_tokens } } })
+      } else if (evt.type === "error") {
+        sse("response.failed", { response: { id: respId, status: "failed", error: { code: evt.error?.type ?? "error", message: evt.error?.message ?? "" } } })
+      }
+    }
+    for await (const chunk of upstream.body) {
+      const text = decoder.decode(chunk, { stream: true })
+      captured += text
+      buf += text
+      let idx
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const blockText = buf.slice(0, idx); buf = buf.slice(idx + 2)
+        const dataLine = blockText.split("\n").find((l) => l.startsWith("data:"))
+        if (!dataLine) continue
+        let evt
+        try { evt = JSON.parse(dataLine.slice(5).trim()) } catch { continue }
+        handleEvent(evt)
+      }
+    }
+    res.end()
+    call.ms = Date.now() - startedAt
+    call.response = parseAnthropicSSE(captured)
+    broadcast({
+      id: `llm-${index}-res`, harness: "codex", type: "llm.response",
+      properties: {
+        index, ms: call.ms,
+        textChars: call.response?.text?.length ?? 0,
+        toolCalls: call.response?.toolCalls ?? [],
+        stopReason: call.response?.stopReason ?? null,
+        usage: call.response?.usage ?? null,
+      },
+    })
+    console.log(`[llm] #${index} (codex) ← ${call.ms}ms  text=${call.response?.text?.length ?? 0}  tools=${(call.response?.toolCalls ?? []).join(",") || "-"}  stop=${call.response?.stopReason ?? "?"}`)
+  } catch (err) {
+    call.error = String(err?.message ?? err)
+    call.ms = Date.now() - startedAt
+    broadcast({ id: `llm-${index}-err`, harness: "codex", type: "llm.response", properties: { index, ms: call.ms, error: call.error } })
+    if (!res.headersSent) res.writeHead(200, { "Content-Type": "text/event-stream" })
+    sse("response.failed", { response: { id: respId, status: "failed", error: { code: "proxy_error", message: call.error } } })
+    res.end()
+  }
+}
+
+
 /* ── 浏览器端 HTTP ────────────────────────────────────── */
 function json(res, data, status = 200) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
@@ -294,7 +589,7 @@ function json(res, data, status = 200) {
 async function readBody(req) {
   let raw = ""
   for await (const chunk of req) raw += chunk
-  return raw ? JSON.parse(raw) : {}
+  return raw ? JSON.parse(raw.replace(/^﻿/, "")) : {}
 }
 
 const server = createServer(async (req, res) => {
@@ -308,7 +603,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/status") {
-      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length })
+      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: "MiniMax-M3" })
       return
     }
 
@@ -328,28 +623,35 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/last-run") {
-      json(res, lastRun)
-      return
-    }
-
-    if (req.method === "GET" && url.pathname === "/api/last-run") {
-      json(res, lastRun)
+      const h = url.searchParams.get("harness") ?? "opencode"
+      json(res, runs[h] ?? runs.opencode)
       return
     }
 
     if (req.method === "POST" && url.pathname === "/api/run") {
-      const { prompt, model } = await readBody(req)
+      const { prompt, model, harness = "opencode" } = await readBody(req)
       if (!prompt) return json(res, { error: "prompt 不能为空" }, 400)
       await writeFile(EVENT_LOG, "").catch(() => {})   // 新一轮清空事件日志
-      llmCalls.length = 0; llmIndex = 0
-      lastRun = { sessionID: null, events: [] }        // 新一轮清空回放缓存
+      for (let i = llmCalls.length - 1; i >= 0; i--) if ((llmCalls[i].harness ?? "opencode") === harness) llmCalls.splice(i, 1)
+      runs[harness] = { sessionID: null, events: [] }  // 清空该 harness 的回放缓存
+
+      if (harness === "codex") {
+        /* codex exec：一次性进程，prompt 作为参数；事件走 stdout JSONL（exec_events.rs:11）。
+         * viz.run 先广播，前端据此清空/重建现场。 */
+        broadcast({ id: `run-${Date.now()}`, harness: "codex", type: "viz.run", properties: { prompt } })
+        runCodex(prompt)
+        json(res, { sessionID: null, harness: "codex" })
+        return
+      }
+
       const created = await oc("/session", {
         method: "POST",
         body: JSON.stringify({ title: "harness-viz " + new Date().toLocaleTimeString("zh-CN") }),
       })
       if (!created.ok) return json(res, { error: "创建会话失败: " + (await created.text()) }, 502)
       const session = await created.json()
-      lastRun.sessionID = session.id
+      runs.opencode.sessionID = session.id
+      broadcast({ id: `run-${Date.now()}`, harness: "opencode", type: "viz.run", properties: { prompt, model: model ?? null, sessionID: session.id } })
       const body = { parts: [{ type: "text", text: prompt }] }
       if (model) {
         const [providerID, ...rest] = String(model).split("/")
@@ -387,7 +689,11 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/abort") {
-      const { sessionID } = await readBody(req)
+      const { sessionID, harness = "opencode" } = await readBody(req)
+      if (harness === "codex") {
+        if (codexProc) { try { codexProc.kill() } catch {}; codexProc = null }
+        return json(res, { ok: true, killed: true })
+      }
       if (!sessionID) return json(res, { error: "缺少 sessionID" }, 400)
       const r = await oc(`/session/${sessionID}/abort`, { method: "POST", body: JSON.stringify({}) })
       json(res, { ok: r.ok, status: r.status })
@@ -405,6 +711,8 @@ async function main() {
   console.log("[viz] 正在拉起隔离的 opencode serve ...")
   console.log(`[viz] 目标项目目录: ${TARGET_PROJECT}`)
   console.log(`[viz] LLM 上游: ${LLM_UPSTREAM}`)
+  await ensureCodexHome()
+  console.log(`[viz] codex CODEX_HOME: ${CODEX_HOME}（模型请求 → 本代理 /v1/responses）`)
   llmProxy.listen(LLM_PORT, HOST, () => console.log(`[viz] LLM 代理(捕获提示词): http://${HOST}:${LLM_PORT}`))
   await startOpencode()
   await waitReady()
@@ -413,8 +721,9 @@ async function main() {
 }
 
 function shutdown() {
-  console.log("\n[viz] 正在退出，关闭 opencode 子进程 ...")
+  console.log("\n[viz] 正在退出，关闭子进程 ...")
   try { child?.kill() } catch {}
+  try { codexProc?.kill() } catch {}
   process.exit(0)
 }
 process.on("SIGINT", shutdown)

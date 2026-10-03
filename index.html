@@ -58,7 +58,7 @@
   /* ── 左：流程图 ── */
   #colFlow { width: var(--w-left); flex-shrink: 0; background: var(--panel); display: flex; flex-direction: column; }
   #flowWrap { position: relative; flex: 1; overflow: auto; }
-  #flowSvg { position: absolute; inset: 0; width: 700px; height: 1070px; pointer-events: none; }
+  .flowsvg { position: absolute; inset: 0; width: 700px; height: 1070px; pointer-events: none; }
   .fnode {
     position: absolute; width: 172px; height: 64px; background: var(--panel2); border: 1.5px solid var(--border);
     border-radius: 10px; padding: 7px 10px; transition: all .25s; z-index: 2; cursor: pointer; overflow: hidden;
@@ -76,13 +76,13 @@
   .fnode.sub { border-style: dashed; }
   .fnode.done { border-color: var(--accent); }
   @keyframes blink { 50% { opacity: .2; } }
-  #flowSvg path, #flowSvg line { stroke: var(--dim); stroke-width: 1.5; fill: none; }
-  #flowSvg .lbl { fill: var(--dim); font-size: 10px; font-family: inherit; }
-  #flowSvg .lbl2 { fill: var(--cyan); font-size: 10px; }
-  #flowSvg .loop { stroke: var(--cyan); }
-  #flowSvg .subedge { stroke: var(--purple); }
-  #flowSvg .loopbox { stroke: var(--cyan); stroke-dasharray: 7 5; stroke-width: 1.5; fill: rgba(57,197,207,.04); }
-  #flowSvg .boxlbl { fill: var(--cyan); font-size: 11px; font-weight: 600; }
+  .flowsvg path, .flowsvg line { stroke: var(--dim); stroke-width: 1.5; fill: none; }
+  .flowsvg .lbl { fill: var(--dim); font-size: 10px; font-family: inherit; }
+  .flowsvg .lbl2 { fill: var(--cyan); font-size: 10px; }
+  .flowsvg .loop { stroke: var(--cyan); }
+  .flowsvg .subedge { stroke: var(--purple); }
+  .flowsvg .loopbox { stroke: var(--cyan); stroke-dasharray: 7 5; stroke-width: 1.5; fill: rgba(57,197,207,.04); }
+  .flowsvg .boxlbl { fill: var(--cyan); font-size: 11px; font-weight: 600; }
 
   /* 扁平菱形判断节点：clip-path 双层实现边框 + 正置文字 */
   .fdia { position: absolute; width: 170px; height: 64px; z-index: 2; cursor: pointer; transition: filter .25s; }
@@ -187,6 +187,12 @@
   #flowWrap { overflow: hidden; cursor: grab; }
   #flowWrap.panning { cursor: grabbing; }
   #flowCanvas { position: absolute; top: 0; left: 0; width: 700px; height: 1070px; transform-origin: 0 0; }
+  /* 两个 harness 各一层流程图，同尺寸同几何纪律，切换显隐 */
+  #flowOpencode, #flowCodex { position: absolute; top: 0; left: 0; width: 700px; height: 1070px; }
+  .fnode.note { border-style: dashed; opacity: .92; }
+  #harnessSwitch { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .hbtn { padding: 5px 16px; font-size: 12px; border: none; border-radius: 0; background: var(--bg); color: var(--dim); cursor: pointer; }
+  .hbtn.on { background: var(--accent); color: #06202e; font-weight: 700; }
 
   /* 节点说明 tab */
   .doc { font-size: 12.5px; line-height: 1.7; padding: 6px 4px; }
@@ -211,7 +217,11 @@
 </head>
 <body>
   <header>
-    <h1>opencode Harness 实时可视化</h1>
+    <h1 id="appTitle">opencode Harness 实时可视化</h1>
+    <div id="harnessSwitch">
+      <button class="hbtn on" data-h="opencode">opencode</button>
+      <button class="hbtn" data-h="codex">codex</button>
+    </div>
     <span id="connBadge" class="badge">连接中…</span>
     <span id="runBadge" class="badge">空闲</span>
     <span id="sessionLabel"></span>
@@ -220,7 +230,8 @@
   </header>
 
   <div id="composer">
-    <select id="modelSel" title="模型"></select>
+    <select id="modelSel" title="模型（opencode 可选）"></select>
+    <span id="codexModelBadge" class="badge mono" style="display:none;padding:7px 12px" title="codex 模型由 data/codex-home/config.toml 固定（经本地代理翻译到 MiniMax）"></span>
     <textarea id="prompt" placeholder="输入提示词，驱动真实 opencode harness…（Ctrl+Enter 运行）"></textarea>
     <button class="ghost" id="demoBtn">演示任务</button>
     <button id="runBtn">运行</button>
@@ -231,7 +242,8 @@
     <div id="colFlow">
       <div class="colhead">HARNESS 流程图（点击节点看记录与说明 · 滚轮缩放 · 拖拽平移 · <a id="flowReset" style="cursor:pointer;color:var(--accent)">重置视图</a>）</div>
       <div id="flowWrap"><div id="flowCanvas">
-        <svg id="flowSvg" viewBox="0 0 700 1070">
+        <div id="flowOpencode">
+        <svg id="flowSvg" class="flowsvg" viewBox="0 0 700 1070">
           <defs>
             <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker>
             <marker id="ahc" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#39c5cf"/></marker>
@@ -288,6 +300,61 @@
         <div class="fnode" data-node="exec" style="left:60px;top:942px;width:220px"  id="fn-exec"><div class="t">⑦ 执行 · 落库</div><div class="s mono">processor.ts:160 → SQLite</div><span class="cnt" id="cnt-exec"></span></div>
         <div class="fnode sub" data-node="sub" style="left:330px;top:326px;width:180px" id="fn-sub"><div class="t">⑧ 子代理</div><div class="s mono">子 session 独立 runLoop</div><span class="cnt" id="cnt-sub"></span></div>
         <div class="fnode done" data-node="done" style="left:556px;top:238px;width:128px" id="fn-done"><div class="t">⑨ 退出循环</div><div class="s mono">break → 最终回答</div></div>
+        </div>
+
+        <!-- ══════════ codex 流程图（几何纪律与 opencode 一致：viewBox=CSS=容器=700×1070，节点固定 64px） ══════════ -->
+        <div id="flowCodex" style="display:none">
+        <svg class="flowsvg" viewBox="0 0 700 1070">
+          <defs>
+            <marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker>
+            <marker id="ahc2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#39c5cf"/></marker>
+          </defs>
+          <!-- run_turn 循环体虚线框：turn.rs:301 loop -->
+          <rect class="loopbox" x="16" y="226" width="514" height="784" rx="14"/>
+          <text class="boxlbl" x="200" y="1002">虚线框内 = run_turn 循环体（turn.rs:301 loop）</text>
+
+          <line x1="280" y1="68"   x2="280" y2="76"   marker-end="url(#ah2)"/>
+          <path d="M280,140 L280,145 L170,145 L170,150" marker-end="url(#ah2)"/>
+          <line x1="170" y1="214"  x2="170" y2="238"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="302"  x2="170" y2="326"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="390"  x2="170" y2="414"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="478"  x2="170" y2="502"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="566"  x2="170" y2="590"  marker-end="url(#ah2)"/>
+          <text class="lbl" x="178" y="584">是</text>
+          <!-- 判断A 否：无工具调用 → 直接到判断B -->
+          <path d="M85,534 L40,534 L40,710 L85,710" marker-end="url(#ah2)"/>
+          <text class="lbl" x="28" y="616">否</text>
+          <line x1="170" y1="654"  x2="170" y2="678"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="742"  x2="170" y2="766"  marker-end="url(#ah2)"/>
+          <text class="lbl" x="178" y="760">是</text>
+          <!-- 判断B 否：break 退出 → ⑧（出框） -->
+          <path d="M255,710 L520,710 L520,270 L556,270" marker-end="url(#ah2)"/>
+          <text class="lbl" x="440" y="702">否·break 退出</text>
+          <!-- ③c 命中：压缩后继续循环（左回环总线 → 回 ④ 左缘） -->
+          <path class="loop" d="M85,798 L34,798"/>
+          <text class="lbl" x="93" y="790">命中</text>
+          <path class="loop" d="M34,798 L34,270 L60,270" marker-end="url(#ahc2)"/>
+          <text class="lbl2" x="34" y="985">↩ 回到循环体开头</text>
+          <!-- ③c 未命中：直接回 ④（右内回边） -->
+          <path class="loop" d="M255,798 L300,798 L300,270 L280,270" marker-end="url(#ahc2)"/>
+          <text class="lbl" x="258" y="830">未命中</text>
+          <!-- ⑦ → 沙箱说明 -->
+          <line x1="280" y1="622" x2="330" y2="622" marker-end="url(#ah2)"/>
+        </svg>
+
+        <div class="fnode" data-node="c-ui" style="left:190px;top:4px;width:180px"   id="fn-c-ui"><div class="t">① 网页输入</div><div class="s mono">POST /api/run → spawn codex exec</div></div>
+        <div class="fnode" data-node="c-server" style="left:190px;top:76px;width:180px"  id="fn-c-server"><div class="t">② exec 受理</div><div class="s mono">exec/lib.rs:246 → run_turn</div><span class="cnt" id="cnt-c-server"></span></div>
+        <div class="fnode" data-node="c-precompact" style="left:60px;top:150px;width:220px" id="fn-c-precompact"><div class="t">③ 预采样压缩检查</div><div class="s mono">turn.rs:169 run_pre_sampling_compact</div></div>
+        <div class="fnode" data-node="c-loop" style="left:60px;top:238px;width:220px" id="fn-c-loop"><div class="t">④ 循环入口</div><div class="s mono">排干插队输入(:305) 采集上下文(:334)</div><span class="cnt" id="cnt-c-loop"></span></div>
+        <div class="fnode" data-node="c-history" style="left:60px;top:326px;width:220px" id="fn-c-history"><div class="t">⑤ 克隆历史+构建请求</div><div class="s mono">:370 clone_history → build_prompt(:1383)</div><span class="cnt" id="cnt-c-history"></span></div>
+        <div class="fnode" data-node="c-llm" style="left:60px;top:414px;width:220px" id="fn-c-llm"><div class="t">⑥ LLM 采样</div><div class="s mono">:2179 → POST /responses · 一次=一步</div><span class="cnt" id="cnt-c-llm"></span></div>
+        <div class="fdia" data-node="c-decide2" style="left:85px;top:502px" id="fn-c-decide2"><div class="shape"></div><div class="inner"></div><div class="txt">有工具调用?</div></div>
+        <div class="fnode" data-node="c-tool" style="left:60px;top:590px;width:220px"  id="fn-c-tool"><div class="t">⑦ 工具执行 · 写回历史</div><div class="s mono">stream_events_utils:289 → drain(:2749)</div><span class="cnt" id="cnt-c-tool"></span></div>
+        <div class="fdia" data-node="c-decide" style="left:85px;top:678px" id="fn-c-decide"><div class="shape"></div><div class="inner"></div><div class="txt">需要跟进?</div></div>
+        <div class="fdia" data-node="c-compact" style="left:85px;top:766px" id="fn-c-compact"><div class="shape"></div><div class="inner"></div><div class="txt">③c 中途压缩?</div><span class="cnt" id="cnt-c-compact"></span></div>
+        <div class="fnode note" data-node="c-sandbox" style="left:330px;top:590px;width:180px" id="fn-c-sandbox"><div class="t">沙箱 · 审批</div><div class="s mono">workspace-write · Never(lib.rs:413)</div></div>
+        <div class="fnode done" data-node="c-done" style="left:556px;top:238px;width:128px" id="fn-c-done"><div class="t">⑧ 退出循环</div><div class="s mono">break(:549) → 进程退出</div><span class="cnt" id="cnt-c-done"></span></div>
+        </div>
       </div></div>
     </div>
     <div class="resizer" id="rz1"></div>
@@ -342,14 +409,27 @@ function bump(id) {
 }
 
 /* ═══════════ 节点记录存储 + 双 tab 面板 ═══════════ */
-const NODE_NAMES = {
-  ui: "① 网页输入", server: "② Server 受理", loop: "③ runLoop 循环体",
-  decide: "判断 · 可退出循环?",
-  subflow1: "③b1 有子任务?", subflow2: "③b2 有压缩任务?", subflow3: "③b3 上下文溢出?",
-  llm: "④ LLM 调用", decide2: "判断 · 模型请求工具?",
-  tool: "⑤ 工具调度", perm: "⑥ 权限门",
-  exec: "⑦ 执行 · 落库", done: "⑨ 退出循环", sub: "⑧ 子代理",
+let harness = "opencode"          // 当前查看的 harness（切换按钮）
+const NAMES = {
+  opencode: {
+    ui: "① 网页输入", server: "② Server 受理", loop: "③ runLoop 循环体",
+    decide: "判断 · 可退出循环?",
+    subflow1: "③b1 有子任务?", subflow2: "③b2 有压缩任务?", subflow3: "③b3 上下文溢出?",
+    llm: "④ LLM 调用", decide2: "判断 · 模型请求工具?",
+    tool: "⑤ 工具调度", perm: "⑥ 权限门",
+    exec: "⑦ 执行 · 落库", done: "⑨ 退出循环", sub: "⑧ 子代理",
+  },
+  codex: {
+    "c-ui": "① 网页输入", "c-server": "② exec 受理", "c-precompact": "③ 预采样压缩检查",
+    "c-loop": "④ 循环入口", "c-history": "⑤ 克隆历史+构建请求", "c-llm": "⑥ LLM 采样",
+    "c-decide2": "判断 · 有工具调用?", "c-tool": "⑦ 工具执行 · 写回历史",
+    "c-decide": "判断 · 需要跟进?", "c-compact": "③c 中途压缩?",
+    "c-sandbox": "沙箱 · 审批", "c-done": "⑧ 退出循环",
+  },
 }
+const NODE_NAMES = NAMES.opencode   // 兼容旧引用（实际取值见 nodeNames()）
+const nodeNames = () => NAMES[harness]
+const eventsByHarness = { opencode: [], codex: [] }   // 切换 harness 时回放用
 const store = {}              // nodeId → [{seq,time,title,meta,kind,data}]
 let selectedNode = "llm"      // 默认看 LLM 调用明细
 let activeTab = "records"
@@ -380,7 +460,7 @@ function selectNode(id) {
     if (e.dataset.node === id) e.classList.remove("unread")   // 清除"有新记录"圆点
   })
   document.getElementById("nodeTitle").innerHTML =
-    `${NODE_NAMES[id]} <span class="sub">— ${store[id]?.length ?? 0} 条记录</span>`
+    `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} 条记录</span>`
   renderPanel()
 }
 document.querySelectorAll(".fnode,.fdia").forEach(el => el.onclick = () => selectNode(el.dataset.node))
@@ -394,7 +474,7 @@ function renderPanel() { activeTab === "records" ? renderRecords() : renderDoc()
 function renderRecords() {
   const list = store[selectedNode] ?? []
   document.getElementById("nodeTitle").innerHTML =
-    `${NODE_NAMES[selectedNode]} <span class="sub">— ${list.length} 条记录</span>`
+    `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} 条记录</span>`
   const panel = document.getElementById("nodePanel")
   if (!list.length) { panel.innerHTML = `<div class="empty">本次任务暂无该节点的运行记录<br>运行一个任务后这里会按时间顺序逐条出现</div>`; return }
   panel.innerHTML = ""
@@ -424,13 +504,35 @@ async function toggleRecDetail(div, rec) {
 }
 
 function renderDoc() {
-  document.getElementById("nodePanel").innerHTML = `<div class="doc">${NODE_DOCS[selectedNode] ?? "暂无说明"}</div>`
+  document.getElementById("nodePanel").innerHTML = `<div class="doc">${DOCS[harness][selectedNode] ?? "暂无说明"}</div>`
 }
 
 /* ═══════════ LLM 调用明细（完整提示词渲染） ═══════════ */
 function renderLlmCall(c) {
   const r = c.request ?? {}
   let html = ""
+  /* codex 的 Responses 请求：instructions + input[] + tools[]（协议形态与 Anthropic 不同） */
+  if (c.harness === "codex" || r.instructions !== undefined) {
+    const sysText = r.instructions ?? ""
+    if (sysText) {
+      sysTextCache[c.index] = sysText
+      html += `<h4>instructions（=system，${sysText.length} 字符，完整）<span class="sysbar"><button class="mini" onclick="copySys(${c.index},this)">复制</button><button class="mini" onclick="dlSys(${c.index})">下载 .md</button><button class="mini" onclick="toggleSys(${c.index},this)">预览</button></span></h4>
+        <pre id="sys-${c.index}">${escapeHtml(sysText)}</pre>
+        <div id="sysmd-${c.index}" class="mdview" style="display:none"></div>`
+    }
+    html += `<h4>input（${(r.input ?? []).length} 项 · ResponseItem 序列，完整）</h4>`
+    for (const it of r.input ?? []) {
+      let body = ""
+      if (it.type === "message") body = (it.content ?? []).map(x => x.text ?? JSON.stringify(x)).join("\n")
+      else if (it.type === "function_call") body = `arguments:\n${JSON.stringify(JSON.parse(it.arguments || "{}"), null, 2)}`
+      else if (it.type === "function_call_output" || it.type === "custom_tool_call_output") body = typeof it.output === "string" ? it.output : JSON.stringify(it.output, null, 2)
+      else body = JSON.stringify(it, null, 2)
+      const roleCls = it.type === "message" ? (it.role === "assistant" ? "assistant" : "user") : "tool"
+      html += `<div style="margin:6px 0"><span class="mrole ${roleCls}">${escapeHtml(it.type)}${it.name ? " · " + escapeHtml(it.name) : ""}${it.role ? " · " + it.role : ""}</span><pre>${escapeHtml(truncate(body, 6000))}</pre></div>`
+    }
+    if (r.tools?.length) html += `<h4>tools（${r.tools.length} 个，完整定义）</h4>${r.tools.map(t => `<div style="margin:4px 0"><span class="mrole tool">${escapeHtml(t.name ?? t.type)}</span><pre>${escapeHtml((t.description ?? "") + "\n" + JSON.stringify(t.parameters ?? t.format ?? {}, null, 2))}</pre></div>`).join("")}`
+    if (c.anthropicRequest) html += `<h4>翻译后的 Anthropic 请求（代理发给上游 MiniMax 的实际报文）</h4><pre>${escapeHtml(`messages=${c.anthropicRequest.messages?.length ?? 0} 条 · tools=${c.anthropicRequest.tools?.length ?? 0} 个 · max_tokens=${c.anthropicRequest.max_tokens}\n（完整 messages/tools 见上方 input/tools——内容等价，仅协议形态转换）`)}</pre>`
+  } else {
   const sys = r.system
   const sysText = typeof sys === "string" ? sys
     : Array.isArray(sys) ? sys.map((b) => b.text ?? JSON.stringify(b)).join("\n")
@@ -451,6 +553,7 @@ function renderLlmCall(c) {
     html += `<div style="margin:6px 0"><span class="mrole ${m.role}">${m.role}</span><pre>${escapeHtml(content)}</pre></div>`
   }
   if (r.tools?.length) html += `<h4>tools（${r.tools.length} 个，完整定义）</h4>${r.tools.map(t => `<div style="margin:4px 0"><span class="mrole tool">${escapeHtml(t.name)}</span><pre>${escapeHtml((t.description ?? "") + "\n" + JSON.stringify(t.input_schema ?? {}, null, 2))}</pre></div>`).join("")}`
+  }
   if (c.response) {
     html += `<h4>响应（完整输出）</h4><pre>耗时 ${c.ms}ms · stop=${c.response.stopReason ?? "-"} · 文本 ${c.response.text?.length ?? 0} 字符 · 思考 ${c.response.thinking?.length ?? 0} 字符 · tool_calls=${(c.response.toolCalls ?? []).join(", ") || "-"}\nusage=${JSON.stringify(c.response.usage ?? {})}</pre>`
     if (c.response.thinking) html += `<h4>思考（thinking，完整）</h4><pre>${escapeHtml(c.response.thinking)}</pre>`
@@ -598,18 +701,29 @@ let llmCallCount = 0
 function handleEvent(evt) {
   const { type, properties: p = {} } = evt
   if (type === "sync") return
+  if (type === "viz.run") {
+    addUser(p.prompt ?? "")
+    addRecord(harness === "codex" ? "c-ui" : "ui", "提交提示词",
+      harness === "codex" ? "POST /api/run → spawn codex exec --json（一次性进程，审批 Never）" : "POST /api/run → 建会话 + 发消息（发后即忘）",
+      "json", p)
+    if (p.sessionID) { currentSession = p.sessionID; document.getElementById("sessionLabel").textContent = "会话 " + p.sessionID.slice(-8) }
+    return
+  }
+  /* codex 事件（含其 LLM 代理事件）走独立处理器。注意 harness 在事件顶层，不在 properties 里 */
+  if (type.startsWith("codex.") || ((type === "llm.request" || type === "llm.response") && evt.harness === "codex"))
+    return handleCodexEvent(evt)
   const child = isChild(p)
 
   switch (type) {
     case "viz.connected":
       document.getElementById("connBadge").className = "badge on"
-      document.getElementById("connBadge").textContent = "已连接 opencode"
+      document.getElementById("connBadge").textContent = "已连接"
       break
     case "server.heartbeat": return
 
-    /* ── 本地 LLM 代理事件 ── */
+    /* ── 本地 LLM 代理事件（opencode） ── */
     case "llm.request": {
-      llmCallCount = Math.max(llmCallCount, p.index)
+      llmCallCount++
       llmBadge.textContent = "LLM 调用: " + llmCallCount
       pulse("llm", 60000); bump("llm")
       addRecord("llm", `#${p.index} ${p.model}`,
@@ -761,8 +875,142 @@ function handleEvent(evt) {
   }
 }
 
+/* ═══════════ codex 事件处理（ThreadEvent JSONL — exec/src/exec_events.rs:11） ═══════════ */
+function codexItem(item, done) {
+  if (!item) return
+  const t = item.type
+  if (t === "agent_message") {
+    if (done) {
+      const b = addMsg("assistant", "助手 · agent_message（output_item.done → 最终回答）")
+      b.textContent = item.text ?? ""
+      pulse("c-llm")
+    }
+  } else if (t === "reasoning") {
+    const b = addMsg("reasoning", "模型思考 · reasoning 摘要")
+    b.textContent = item.text ?? ""
+  } else if (t === "command_execution") {
+    pulse("c-tool"); if (done) bump("c-tool")
+    const statusCN = { in_progress: "执行中", completed: "已完成", failed: "失败", declined: "被拒绝" }[item.status] ?? item.status
+    let html = `<span class="toolname">shell</span><span class="status ${item.status === "completed" ? "completed" : item.status === "in_progress" ? "running" : "error"}">${statusCN}</span>`
+    html += `<pre>命令:\n${escapeHtml(item.command ?? "")}</pre>`
+    if (done && item.aggregated_output) html += `<pre>输出:\n${escapeHtml(truncate(String(item.aggregated_output), 1200))}</pre>`
+    if (done) html += `<div style="color:var(--dim);font-size:11px">exit_code=${item.exit_code ?? "?"}</div>`
+    let el = toolCards["cx-" + item.id]
+    if (!el) { el = addMsg("tool", "工具 · command_execution（handle_output_item_done → stream_events_utils.rs:289）"); toolCards["cx-" + item.id] = el }
+    el.innerHTML = html; scrollBottom()
+    if (item.status === "in_progress") {
+      addRecord("c-tool", "执行命令", "ToolCallRuntime.handle_tool_call → 沙箱内执行；结果由 drain_in_flight（turn.rs:2749→:2139）写入历史", "json", { 输入_command: item.command, _itemId: item.id })
+    } else if (done) {
+      updateRec("c-tool", r => r.data?._itemId === item.id, { 输出_status: item.status, 输出_exit_code: item.exit_code, 输出_output: truncate(String(item.aggregated_output ?? ""), 4000) })
+    }
+    log("codex.item." + (done ? "completed" : "started"), `shell ${truncate(item.command ?? "", 60)} → ${item.status}`, "tool")
+  } else if (t === "file_change" && done) {
+    pulse("c-tool"); bump("c-tool")
+    const paths = (item.changes ?? []).map(c => `${c.kind}:${c.path}`).join(", ")
+    const b = addMsg("tool", "工具 · file_change（补丁落盘）")
+    b.innerHTML = `<span class="toolname">apply_patch</span><span class="status ${item.status === "completed" ? "completed" : "error"}">${item.status}</span><pre>${escapeHtml(paths)}</pre>`
+    addRecord("c-tool", "文件变更 " + (item.status === "completed" ? "成功" : "失败"), "补丁应用（只发 completed 事件）", "json", { 输入_changes: item.changes, 输出_status: item.status })
+    log("codex.item.completed", "file_change " + paths, "tool")
+  } else if (t === "mcp_tool_call") {
+    pulse("c-tool"); if (done) bump("c-tool")
+    const b = addMsg("tool", "工具 · mcp_tool_call")
+    b.innerHTML = `<span class="toolname">${escapeHtml((item.server ?? "") + "/" + (item.tool ?? ""))}</span><span class="status ${item.status === "completed" ? "completed" : item.status === "in_progress" ? "running" : "error"}">${item.status}</span><pre>${escapeHtml(JSON.stringify(item.arguments ?? {}, null, 2))}</pre>`
+    if (done) addRecord("c-tool", `MCP ${item.server}/${item.tool} → ${item.status}`, "", "json", item)
+  } else if (t === "todo_list") {
+    const b = addMsg("tool", "计划 · todo_list")
+    b.innerHTML = `<span class="toolname">todo</span><pre>${(item.items ?? []).map(x => `${x.completed ? "☑" : "☐"} ${escapeHtml(x.text ?? "")}`).join("\n")}</pre>`
+  } else if (t === "web_search" && done) {
+    addInfo("web_search: " + (item.query ?? ""))
+  } else if (t === "error") {
+    addError(item.message ?? JSON.stringify(item))
+  }
+}
+
+function handleCodexEvent(evt) {
+  const { type, properties: p = {} } = evt
+  switch (type) {
+    case "llm.request": {
+      llmCallCount++
+      llmBadge.textContent = "LLM 调用: " + llmCallCount
+      pulse("c-history"); bump("c-history")
+      pulse("c-llm", 60000); bump("c-llm")
+      addRecord("c-history", `构建采样请求 #${p.index}`,
+        `克隆历史 for_prompt（turn.rs:370-376）→ build_prompt（:1383）<br>instructions ${p.systemChars} 字符 · input ${p.messages} 项 · tools ${p.tools.length} 个${p.tools.length ? "<br>" + p.tools.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("") : ""}`,
+        "llm", { index: p.index })
+      addRecord("c-llm", `#${p.index} ${p.model} <span class="waiting">采样中…</span>`,
+        `POST /v1/responses（try_run_sampling_request turn.rs:2179 → 流事件循环 :2250）——一次 HTTP 调用 = 一步`,
+        "llm", { index: p.index })
+      log("llm.request", `#${p.index} ${p.model} input=${p.messages}项 tools=${p.tools.length}`, "llm")
+      break
+    }
+    case "llm.response": {
+      pulse("c-llm", 1200)
+      const rec = (store["c-llm"] ?? []).find(r => r.data?.index === p.index)
+      if (rec) rec.title = rec.title.replace(/<span class="waiting">采样中…<\/span>/,
+        p.error ? `<span style="color:var(--red)">失败 ${p.ms}ms</span>` : `${p.ms}ms · stop=${p.stopReason ?? "-"} · 文本 ${p.textChars} 字符`)
+      if (selectedNode === "c-llm" && activeTab === "records") renderRecords()
+      if (p.error) { addError(`LLM 调用 #${p.index} 失败: ${p.error}`); break }
+      /* 判断A：响应里有没有工具调用（output_item.done → ToolRouter, stream_events_utils.rs:297） */
+      pulse("c-decide2")
+      const hasTools = (p.toolCalls ?? []).length > 0
+      addRecord("c-decide2", hasTools ? `是：${p.toolCalls.join(", ")}` : "否：无工具调用",
+        `判定依据：响应 output items 是否含 function_call（needs_follow_up=true，stream_events_utils.rs:326）`, "json",
+        { 输入_stopReason: p.stopReason, 输入_toolCalls: p.toolCalls ?? [],
+          判定: hasTools ? "⑦ 立即入队执行（in_flight，turn.rs:2391）→ 流结束后 drain_in_flight 写回历史 → 需要跟进 → 回 ④ 发起新的 HTTP 调用"
+                         : "无需执行工具 → 跳过 ⑦ 直接到判断B" })
+      /* 判断B 的"是"侧证据：有工具调用必然 needs_follow_up */
+      if (hasTools) addRecord("c-decide", "是：有工具结果待回灌", "needs_follow_up（turn.rs:423）= 工具调用(:326) → continue 回循环头，下一次采样重读历史（工具结果已在其中）", "json", { 依据: "工具调用 → needs_follow_up=true" })
+      log("llm.response", `#${p.index} ${p.ms}ms stop=${p.stopReason ?? "-"} tools=${(p.toolCalls || []).join(",") || "-"}`, "llm")
+      break
+    }
+    case "codex.proc.start":
+      addInfo("启动 codex exec 进程（--json · -s workspace-write · 审批 Never · exec/lib.rs:413）")
+      pulse("c-server")
+      log(type, p.cmd ?? "spawn"); break
+    case "codex.thread.started":
+      currentSession = p.thread_id
+      document.getElementById("sessionLabel").textContent = "线程 " + String(p.thread_id).slice(-8)
+      pulse("c-server"); bump("c-server")
+      addRecord("c-server", "线程启动 " + p.thread_id,
+        "exec run_main（exec/src/lib.rs:246）→ Op::UserTurn → RegularTask → run_turn（session/turn.rs:153）", "json", p)
+      log(type, "thread " + p.thread_id, "ok"); break
+    case "codex.turn.started":
+      setRun("busy"); pulse("c-loop", 4000); bump("c-loop")
+      addRecord("c-loop", "turn 开始 → 进入 run_turn 循环体",
+        "排干插队输入（:305）→ 采集 step 上下文（:334）→ 每轮一次采样；turn 前已做预采样压缩检查（:169）", "json", p)
+      log(type, "turn 开始", "ok"); break
+    case "codex.item.started": codexItem(p.item, false); break
+    case "codex.item.updated": codexItem(p.item, false); break
+    case "codex.item.completed": codexItem(p.item, true); break
+    case "codex.turn.completed":
+      setRun("done"); pulse("c-done", 4000); bump("c-done")
+      addRecord("c-decide", "否：needs_follow_up=false → break",
+        "退出判定（turn.rs:500）：无工具调用且无插队输入 → stop hooks（:502）→ break（:549）", "json", { usage: p.usage })
+      addRecord("c-done", "turn.completed → run_turn 返回",
+        "break（turn.rs:549）→ 返回 last_agent_message → exec 进程即将退出", "json", p)
+      addInfo("turn 完成 —— run_turn break（turn.rs:549）· usage=" + JSON.stringify(p.usage ?? {}))
+      log(type, "turn 完成", "ok"); break
+    case "codex.turn.failed":
+      setRun("done")
+      addError("turn 失败: " + (p.error?.message ?? JSON.stringify(p)))
+      addRecord("c-done", "turn 失败", "", "json", p)
+      log(type, "turn 失败", "warn"); break
+    case "codex.error":
+      addError(p.message ?? JSON.stringify(p))
+      log(type, p.message ?? "error", "warn"); break
+    case "codex.proc.exit":
+      setRun("done")
+      addRecord("c-done", `exec 进程退出 code=${p.code}`, p.code === 0 ? "正常退出" : "异常退出", "json", p)
+      if (p.code !== 0 && p.code != null) addError("codex exec 退出码 " + p.code + (p.stderrTail ? "\n" + p.stderrTail : ""))
+      log(type, `进程退出 code=${p.code}`, p.code === 0 ? "ok" : "warn"); break
+    default:
+      log(type, JSON.stringify(p).slice(0, 90))
+  }
+}
+
 /* ═══════════ 节点说明（静态文档） ═══════════ */
-const NODE_DOCS = {
+const DOCS = {
+opencode: {
   ui: `<h3>关键流程</h3><p>网页把提示词 POST 到 <code>/api/run</code> → server.mjs 建会话（POST /session）→ 发消息（POST /session/{id}/message，<b>发后即忘</b>，因为 prompt() 会同步跑完整个 runLoop，遇权限询问会挂起）。</p>
        <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>prompt 文本、model（providerID/modelID）</td></tr><tr><th>输出</th><td>sessionID；后续全部靠事件流呈现</td></tr></table>
        <p>源码：<code>server.mjs /api/run</code>；opencode 侧 <code>session/prompt.ts:1052</code></p>`,
@@ -822,23 +1070,69 @@ const NODE_DOCS = {
        <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>子代理类型 + 任务描述 prompt</td></tr><tr><th>输出</th><td>子代理最终文本，作为 task 工具的 tool_result 回灌父 session</td></tr></table>`,
   done: `<h3>关键流程</h3><p>命中退出条件 → runLoop <code>break</code> → <code>compaction.prune</code>（:1338）清理 → 返回最后一条 assistant 消息 → <code>session.idle</code> 事件 → 终态文本在转写区完整呈现。</p>
        <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>break（退出判定通过）</td></tr><tr><th>输出</th><td>session.idle、最终回答、token/cost 汇总</td></tr></table>`,
+},
+codex: {
+  "c-ui": `<h3>关键流程</h3><p>网页把提示词 POST 到 <code>/api/run</code>（harness=codex）→ server.mjs <b>spawn <code>codex exec --json</code></b>（一次性进程，非常驻服务）：<code>--skip-git-repo-check</code>、<code>-C target-project</code>、<code>-s workspace-write</code>、<code>-m MiniMax-M3</code>。进程事件走 <b>stdout JSONL</b>（ThreadEvent，exec/src/exec_events.rs:11），被本页逐行解析呈现。</p>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>prompt 文本（作为 argv 参数）</td></tr><tr><th>输出</th><td>子进程；thread.started 带回 thread_id</td></tr></table>
+       <p>隔离：子进程 env 设 <code>CODEX_HOME=data/codex-home</code>，其 config.toml 把 model_provider 指向本代理 <code>/v1/responses</code>（env_key=MINIMAX_API_KEY）。</p>`,
+  "c-server": `<h3>关键流程</h3><p><code>run_main</code>（exec/src/lib.rs:246）：加载 CODEX_HOME 配置（:322 find_codex_home 读 CODEX_HOME 环境变量，core/config/mod.rs:4709）→ 建会话 → 提交 <code>Op::UserTurn</code> → RegularTask 调 <code>run_turn</code>（core/src/session/turn.rs:153）。<b>审批策略固定 Never</b>（exec/src/lib.rs:413 <code>AskForApproval::Never</code>）——exec 无交互弹窗，写操作由沙箱约束。</p>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>prompt + 配置（model_provider=viz 指向本代理）</td></tr><tr><th>输出</th><td>thread.started / turn.started 事件</td></tr></table>`,
+  "c-precompact": `<h3>关键流程（turn.rs:169）</h3><p>每个 turn 开始前、在用户输入落库<b>之前</b>先跑一次 <code>run_pre_sampling_compact</code>：若历史已逼近上下文上限，先压缩再进入循环（源码注释 :165-168 说明这是保守估计）。正常短任务不触发，仅在长会话时命中。</p>
+       <h3>与中途压缩的区别</h3><table><tr><th>③ 预采样压缩</th><td>turn 开始前一次，:169</td></tr><tr><th>③c 中途压缩</th><td>循环内每轮判定 should_roll_over（:458）→ run_auto_compact（:471）</td></tr></table>`,
+  "c-loop": `<h3>语义</h3><p>本节点=虚线框循环体的<b>每一轮开头</b>（turn.rs:301 <code>loop {</code>）。每轮先做两件内务：</p>
+       <li><b>排干插队输入</b>（:305-323）：用户在模型运行中又发的消息，在此并入历史（exec 单发模式通常为空）</li>
+       <li><b>采集 step 上下文</b>（:334-356 <code>capture_step_context</code>）：环境/cwd/git 根/可用工具等一次性快照，本轮共享</li>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>input_queue 里的插队输入</td></tr><tr><th>输出</th><td>StepContext（本轮唯一事实源）</td></tr></table>`,
+  "c-history": `<h3>关键流程（turn.rs:370-376）</h3><p><code>sess.clone_history().for_prompt(...)</code>：把会话历史（含上一轮写回的工具结果）整体克隆为 <code>Vec&lt;ResponseItem&gt;</code> → <code>build_prompt</code>（:1383）加上 instructions 组装成 Responses 请求体。</p>
+       <h3>工具结果如何回灌</h3><p>与 opencode 同构：<b>工具结果不在同一 HTTP 调用内继续</b>，而是⑦写回历史后，下一轮这里重新克隆全量历史再发<b>新的</b> HTTP 请求——可用 LLM 记录里 input 项数逐轮增长来实证。</p>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>完整历史（含 function_call_output）</td></tr><tr><th>输出</th><td>{model, instructions, input, tools, stream:true}（common.rs:252）</td></tr></table>`,
+  "c-llm": `<h3>关键流程（turn.rs:2179 try_run_sampling_request）</h3><p><code>client_session.stream</code> 发起 <b>POST {base_url}/responses</b>（codex-api/src/endpoint/responses.rs:70 stream_request，path()="responses" :100）→ SSE 流事件循环（turn.rs:2250 <code>loop</code>）逐事件处理：<code>output_item.done</code> 触发工具入队（:2384）、<code>output_text.delta</code> 流式文本（:2585）、<code>response.completed</code> 收尾（:2539，缺失则报错 :2282）。</p>
+       <h3>模型如何知道工具</h3><p>与 opencode 一样是<b>协议级 tools 字段</b>（Responses 请求体的 tools 数组，function/custom 工具各带 description+parameters），不是写在 instructions 里。模型以结构化 <code>function_call</code> output item 调用。</p>
+       <h3>协议事实</h3><p>codex ≥0.147 只支持 <b>Responses API</b>（wire_api=chat 已移除，model-provider-info/src/lib.rs:57）。本页通过本地代理把 Responses 请求翻译成 Anthropic Messages 发给 MiniMax，再把响应翻译回 Responses SSE——LLM 记录里可同时看到两种形态。</p>`,
+  "c-decide2": `<h3>判定内容</h3><p>本次响应的 output items 里有没有工具调用。机制：<code>response.output_item.done</code> 事件 → <code>handle_output_item_done</code>（core/src/stream_events_utils.rs:289）→ <code>ToolRouter::build_tool_call</code>（:297）识别出工具调用即 <code>needs_follow_up = true</code>（:326）并把工具 future 入队（turn.rs:2391）。</p>
+       <h3>两个分支</h3><table>
+       <tr><th>是</th><td>⑦ 工具执行（本采样流内入队、流末统一收割结果）→ 写回历史 → 判断B=是 → 回 ④</td></tr>
+       <tr><th>否</th><td>没有工具要执行 → 直接到判断B</td></tr></table>`,
+  "c-tool": `<h3>关键流程</h3><p>工具调用在<b>采样流处理期间</b>入队（turn.rs:2391 <code>in_flight.push_back(tool_future)</code>），由 <code>ToolCallRuntime::handle_tool_call</code> 在沙箱内执行；流结束后 <code>drain_in_flight</code>（turn.rs:2749→:2130）按序收割结果，<code>record_conversation_items</code>（:2139）<b>把 function_call_output 写回历史</b>——下一轮⑤克隆历史时回灌模型。</p>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>function_call item（name + arguments JSON 字符串）</td></tr><tr><th>输出</th><td>function_call_output item 写入历史；command_execution / file_change 等 ThreadItem 事件</td></tr></table>`,
+  "c-decide": `<h3>判定依据（turn.rs:423）</h3><p><code>needs_follow_up = model_needs_follow_up || has_pending_input</code>。三个来源：</p>
+       <li>模型发出了工具调用（stream_events_utils.rs:326，占绝大多数）</li>
+       <li>有插队用户输入待处理（turn.rs:412-413）</li>
+       <li>响应带了 <code>end_turn=false</code>（OpenAI 后端专有字段，turn.rs:2577；第三方 provider 无此字段 → None，不影响判定）</li>
+       <h3>两个分支</h3><table>
+       <tr><th>是</th><td>先过 ③c 中途压缩判定（:458 should_roll_over），再 continue 回 ④</td></tr>
+       <tr><th>否</th><td>stop hooks（:502）→ break（:537/:549）→ ⑧ 退出循环，turn.completed</td></tr></table>
+       <h3>与 opencode 的对照</h3><p>opencode 的退出信号是<b>落库的 finish 字段</b>（processor.ts:443 写 SQLite）；codex 的 needs_follow_up 是<b>本轮内存计算值</b>（工具调用/插队输入/end_turn 三路或），不落库。信号载体不同，判定时机相同（每轮生成结束后）。</p>`,
+  "c-compact": `<h3>判定依据（turn.rs:458-460）</h3><p><code>should_roll_over = needs_follow_up && (收到新上下文窗口请求 || token 触及上限)</code>。命中 → <code>run_auto_compact</code>（:471，压缩本身也是一次 LLM 采样）→ <code>continue</code>（:497）回循环头。未命中 → 直接 continue 回 ④。</p>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>token_status（:414 context_window_token_status）</td></tr><tr><th>输出</th><td>压缩后的历史（ContextCompaction item）</td></tr></table>
+       <p>短任务不触发；触发时本节点出现「命中」记录（可观察信号：压缩那次额外采样 + input 项数骤降）。</p>`,
+  "c-sandbox": `<h3>exec 模式的安全模型</h3><p><b>审批 = Never</b>（exec/src/lib.rs:413 <code>AskForApproval::Never</code>）：非交互模式没有任何弹窗，工具要么在沙箱内直接执行、要么被沙箱拒绝。<b>沙箱 = workspace-write</b>（本页启动参数 <code>-s workspace-write</code>）：只读系统 + 可写工作目录（target-project）。所以 codex 图里没有 opencode 的「权限门」节点——那不是省略，是架构差异：opencode 是运行时交互审批，codex exec 是启动时静态授权。</p>`,
+  "c-done": `<h3>关键流程</h3><p>判断B=否 → stop hooks（turn.rs:502）→ <code>break</code>（:537/:549）→ run_turn 返回 <code>last_agent_message</code>（:588）→ 发 <code>turn.completed</code>（含 usage）→ exec 主流程收尾 → <b>进程退出</b>（本页捕获 exit code）。</p>
+       <h3>关键输入 / 输出</h3><table><tr><th>输入</th><td>break（needs_follow_up=false）</td></tr><tr><th>输出</th><td>turn.completed（usage）、最终 agent_message、进程退出码</td></tr></table>`,
+},
 }
 
 /* ═══════════ 连接 & 控制 ═══════════ */
 function connect() {
   const es = new EventSource("/api/stream")
-  es.onmessage = (e) => { try { handleEvent(JSON.parse(e.data)) } catch (err) { console.error(err) } }
+  es.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data)
+      const h = evt.harness ?? "opencode"
+      if (evt.type !== "viz.connected") eventsByHarness[h]?.push(evt)
+      if (h === harness) handleEvent(evt)
+    } catch (err) { console.error(err) }
+  }
   es.onerror = () => {
     document.getElementById("connBadge").className = "badge"
     document.getElementById("connBadge").textContent = "连接断开，重连中…"
   }
 }
 
-async function run() {
-  const prompt = document.getElementById("prompt").value.trim()
-  if (!prompt) return
-  setRun("busy")
+/* 清空界面状态（运行新任务 / 切换 harness 共用） */
+function resetUI() {
   transcript.innerHTML = ""
+  eventlog.innerHTML = ""; logN = 0; logCount.textContent = "(0)"
   Object.keys(bubbles).forEach(k => delete bubbles[k])
   Object.keys(toolCards).forEach(k => delete toolCards[k])
   Object.keys(partVocab).forEach(k => delete partVocab[k])
@@ -850,29 +1144,59 @@ async function run() {
   llmCallCount = 0; llmBadge.textContent = "LLM 调用: 0"
   document.querySelectorAll(".cnt").forEach(c => { c.style.display = "none"; c.textContent = "0" })
   document.querySelectorAll(".fnode,.fdia").forEach(e => { e.classList.remove("unread") })
-  addUser(prompt)
-  addRecord("ui", "提交提示词", "POST /api/run → 建会话 + 发消息（发后即忘）", "json", { prompt, model: document.getElementById("modelSel").value })
+  currentSession = null
+  document.getElementById("sessionLabel").textContent = ""
+  setRun("idle")
+}
+
+/* 切换 harness：换流程图 + 重放该 harness 的事件流重建现场 */
+function switchHarness(h) {
+  if (h === harness) return
+  harness = h
+  document.querySelectorAll(".hbtn").forEach(b => b.classList.toggle("on", b.dataset.h === h))
+  document.getElementById("flowOpencode").style.display = h === "opencode" ? "" : "none"
+  document.getElementById("flowCodex").style.display = h === "codex" ? "" : "none"
+  document.getElementById("appTitle").textContent = (h === "codex" ? "codex" : "opencode") + " Harness 实时可视化"
+  document.getElementById("modelSel").style.display = h === "codex" ? "none" : ""
+  document.getElementById("codexModelBadge").style.display = h === "codex" ? "" : "none"
+  document.getElementById("prompt").placeholder = h === "codex"
+    ? "输入提示词，驱动真实 codex exec…（Ctrl+Enter 运行）"
+    : "输入提示词，驱动真实 opencode harness…（Ctrl+Enter 运行）"
+  resetUI()
+  for (const evt of eventsByHarness[h]) handleEvent(evt)
+  selectNode(h === "codex" ? "c-llm" : "llm")
+}
+document.querySelectorAll(".hbtn").forEach(b => b.onclick = () => switchHarness(b.dataset.h))
+
+async function run() {
+  const prompt = document.getElementById("prompt").value.trim()
+  if (!prompt) return
+  setRun("busy")
+  resetUI()
+  setRun("busy")
+  eventsByHarness[harness] = []   // 新一轮：清空本 harness 的事件缓存
   renderPanel()
   const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, model: document.getElementById("modelSel").value || undefined }) })
+    body: JSON.stringify({ prompt, harness, model: document.getElementById("modelSel").value || undefined }) })
   const data = await res.json()
   if (data.error) { addError(data.error); setRun("idle"); return }
-  currentSession = data.sessionID
-  document.getElementById("sessionLabel").textContent = "会话 " + data.sessionID.slice(-8)
-  addRecord("ui", "会话已受理 " + data.sessionID, "opencode SessionPrompt.prompt 开始运行", "json", data)
+  if (data.sessionID) {
+    currentSession = data.sessionID
+    document.getElementById("sessionLabel").textContent = "会话 " + data.sessionID.slice(-8)
+  }
 }
 
 document.getElementById("runBtn").onclick = run
 document.getElementById("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run() })
 document.getElementById("demoBtn").onclick = () => {
-  document.getElementById("prompt").value =
-    "请先用 glob 列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome。"
+  document.getElementById("prompt").value = harness === "codex"
+    ? "请列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome，最后告诉我改了什么。"
+    : "请先用 glob 列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome。"
 }
 document.getElementById("abortBtn").onclick = async () => {
-  if (!currentSession) return
   await fetch("/api/abort", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionID: currentSession }) })
-  addInfo("已请求中断（POST /session/{id}/abort）"); setRun("idle")
+    body: JSON.stringify({ sessionID: currentSession, harness }) })
+  addInfo(harness === "codex" ? "已杀 codex exec 进程" : "已请求中断（POST /session/{id}/abort）"); setRun("idle")
 }
 
 /* ═══════════ 流程图缩放 & 平移 ═══════════ */
@@ -925,7 +1249,8 @@ makeResizable("rz1", "--w-left", false)
 makeResizable("rz2", "--w-right", true)
 
 async function init() {
-  await (await fetch("/api/status")).json()
+  const status = await (await fetch("/api/status")).json()
+  document.getElementById("codexModelBadge").textContent = "模型: " + (status.codexModel ?? "?") + "（codex 固定）"
   const { models } = await (await fetch("/api/models")).json()
   const sel = document.getElementById("modelSel")
   for (const m of models) {
@@ -935,13 +1260,16 @@ async function init() {
   }
   /* 刷新恢复：回放服务端内存里的上次运行事件（重启 server 后即为空） */
   try {
-    const last = await (await fetch("/api/last-run")).json()
+    const last = await (await fetch("/api/last-run?harness=opencode")).json()
     if (last.events?.length) {
+      for (const evt of last.events) eventsByHarness.opencode.push(evt)
       currentSession = last.sessionID
       if (currentSession) document.getElementById("sessionLabel").textContent = "会话 " + currentSession.slice(-8)
       addInfo(`已恢复上次运行的现场（回放 ${last.events.length} 个事件；server 重启后不再保留）`)
       for (const evt of last.events) handleEvent(evt)
     }
+    const lastC = await (await fetch("/api/last-run?harness=codex")).json()
+    if (lastC.events?.length) for (const evt of lastC.events) eventsByHarness.codex.push(evt)
   } catch {}
   selectNode("llm")
   connect()
