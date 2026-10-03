@@ -225,6 +225,7 @@
     <span id="connBadge" class="badge">连接中…</span>
     <span id="runBadge" class="badge">空闲</span>
     <span id="sessionLabel"></span>
+    <span id="verBadge" class="badge mono" style="color:var(--dim)" title="CLI 版本——README「版本适配」表说明适配范围"></span>
     <div class="spacer"></div>
     <span class="badge mono" id="llmBadge" title="LLM 调用次数">LLM 调用: 0</span>
   </header>
@@ -1251,6 +1252,7 @@ makeResizable("rz2", "--w-right", true)
 async function init() {
   const status = await (await fetch("/api/status")).json()
   document.getElementById("codexModelBadge").textContent = "模型: " + (status.codexModel ?? "?") + (status.codexCapture ? "（codex 固定 · 经代理捕获）" : "（codex 自带默认 · 无捕获）")
+  if (status.versions) document.getElementById("verBadge").textContent = `opencode ${status.versions.opencode} · codex ${status.codexModel && status.versions.codex ? status.versions.codex : "?"}`
   const { models } = await (await fetch("/api/models")).json()
   const sel = document.getElementById("modelSel")
   for (const m of models) {

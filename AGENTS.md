@@ -19,7 +19,7 @@
 
 - **事件必须用 `/global/event`**，不能用 `/event`（后者按 directory 严格相等过滤会丢事件）。
 - **`POST /session/{id}/message` 同步跑完整个 runLoop**（遇权限询问挂起）→ 必须**发后即忘**。
-- LLM 捕获靠代理：opencode 走 Anthropic 透传（models.json 把 api 指向 :45322）；codex 只讲 Responses API（≥0.147 已移除 wire_api=chat），代理在 `/v1/responses` 做 **Responses↔Anthropic 双向翻译**再转 MiniMax。
+- LLM 捕获靠代理：opencode 走 Anthropic 透传（data/config/models.json 把 api 指向 :45322）；codex 只讲 Responses API（≥0.147 已移除 wire_api=chat），代理在 `/v1/responses` 做 **Responses↔Anthropic 双向翻译**再转 MiniMax。
 - 每个事件带**顶层** `harness` 字段（opencode/codex），不在 `properties` 里——前端路由按 `evt.harness` 判别（曾因错读 `p.harness` 导致 codex 的 LLM 记录不可见）。
 - `llmCalls` / `runs.{opencode,codex}` 全在内存：刷新页面用 `/api/last-run?harness=` 回放恢复；server 重启即清。`data/events.jsonl` 落盘仅供排查，不自动回放。
 - 隔离：opencode 靠环境变量（见 README 表格）；codex 靠 `CODEX_HOME=data/codex-home`（启动时重建 config.toml + rules/default.rules）。都不触碰用户真实配置。
@@ -45,7 +45,7 @@
 ## Shell 陷阱（PowerShell 5.1）
 
 - 没有 `??` 操作符；发中文 JSON 用 `[System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))` 写文件再 `-InFile` 上传（避免 BOM/引号问题）。
-- `data/` 下运行时状态（db/log/events.jsonl/codex-home）已 gitignore，勿提交；`data/models.json`、`data/config/opencode.json` 是需入库的隔离配置。
+- `data/` 下运行时状态（db/log/events.jsonl/codex-home）已 gitignore，勿提交；`data/config/models.json`、`data/config/opencode.json` 是需入库的隔离配置。
 
 ## 参考文档
 

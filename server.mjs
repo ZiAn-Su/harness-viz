@@ -56,7 +56,7 @@ const AUTH = "Basic " + Buffer.from(`opencode:${OC_PASSWORD}`).toString("base64"
  *   "upstreamEnvKey": 代理转发时使用的环境变量名（其值绝不落盘），
  *   "codex": { "useDefaultModel": true 则 codex 用自带默认模型（ChatGPT 登录/OPENAI_API_KEY），
  *              绕过代理 → 无提示词捕获；false 则走代理 + model 指定模型名 },
- *   "opencode": { "model": "providerID/modelID"，需与 data/models.json 里的条目对应 }
+ *   "opencode": { "model": "providerID/modelID"，需与 data/config/models.json 里的条目对应 }
  * } */
 let CFG = { upstream: "https://api.minimaxi.com", upstreamEnvKey: "MINIMAX_API_KEY", codex: { useDefaultModel: false, model: "MiniMax-M3" }, opencode: { model: "minimax-cn-coding-plan/MiniMax-M3" } }
 try { CFG = { ...CFG, ...JSON.parse(await readFile(path.join(ROOT, "viz.config.json"), "utf8")) } } catch {}
@@ -65,6 +65,21 @@ const LLM_UPSTREAM = process.env.LLM_UPSTREAM ?? CFG.upstream
 let child = null
 let ocReady = false
 let codexProc = null   // codex exec 子进程（每次运行一个）
+
+/* ── CLI 版本探测（适配性锚点：README「版本适配」表） ── */
+const versions = { opencode: "?", codex: "?" }
+async function detectVersions() {
+  const { execFile } = await import("node:child_process")
+  const { promisify } = await import("node:util")
+  const run = promisify(execFile)
+  try { versions.opencode = (await run("opencode", ["--version"], { shell: process.platform === "win32", timeout: 15000 })).stdout.trim() } catch {}
+  try {
+    const codexJs = process.env.CODEX_CLI_JS
+      ?? path.join(process.env.APPDATA ?? "", "npm", "node_modules", "@openai", "codex", "bin", "codex.js")
+    versions.codex = (await run(process.execPath, [codexJs, "--version"], { timeout: 30000 })).stdout.trim()
+  } catch {}
+  console.log(`[viz] opencode ${versions.opencode} · codex ${versions.codex}`)
+}
 
 /* ── codex 隔离：CODEX_HOME 指向 data/codex-home ──
  * useDefaultModel=false：config.toml 注册自定义 provider 把模型请求引到本代理（可捕获提示词）；
@@ -145,7 +160,7 @@ async function startOpencode() {
     OPENCODE_CONFIG_DIR: path.join(DATA_DIR, "config"),
     OPENCODE_DB: path.join(DATA_DIR, "opencode.db"),
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-    OPENCODE_MODELS_PATH: path.join(DATA_DIR, "models.json"),
+    OPENCODE_MODELS_PATH: path.join(DATA_DIR, "config", "models.json"),
     OPENCODE_DISABLE_MODELS_FETCH: "1",
     OPENCODE_SERVER_PASSWORD: OC_PASSWORD,
     OPENCODE_CLIENT: "harness-viz",
@@ -628,12 +643,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/status") {
-      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: CFG.codex.model, codexCapture: !CFG.codex.useDefaultModel, ocModel: CFG.opencode.model })
+      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: CFG.codex.model, codexCapture: !CFG.codex.useDefaultModel, ocModel: CFG.opencode.model, versions })
       return
     }
 
     if (req.method === "GET" && url.pathname === "/api/models") {
-      const data = JSON.parse(await readFile(path.join(DATA_DIR, "models.json"), "utf8"))
+      const data = JSON.parse(await readFile(path.join(DATA_DIR, "config", "models.json"), "utf8"))
       const models = []
       for (const [pid, provider] of Object.entries(data))
         for (const modelID of Object.keys(provider.models ?? {}))
@@ -737,6 +752,7 @@ async function main() {
   console.log(`[viz] 目标项目目录: ${TARGET_PROJECT}`)
   console.log(`[viz] LLM 上游: ${LLM_UPSTREAM}`)
   await ensureCodexHome()
+  detectVersions()
   console.log(`[viz] codex CODEX_HOME: ${CODEX_HOME}（模型请求 → 本代理 /v1/responses）`)
   llmProxy.listen(LLM_PORT, HOST, () => console.log(`[viz] LLM 代理(捕获提示词): http://${HOST}:${LLM_PORT}`))
   await startOpencode()

@@ -22,7 +22,7 @@
 | codex CLI ≥ 0.147 | `npm i -g @openai/codex`；仅 codex 模式需要 |
 | 模型凭据 | 二选一：`MINIMAX_API_KEY` 环境变量（默认配置，[MiniMax 开放平台](https://platform.minimaxi.com)申请）；或 codex 的 ChatGPT 登录 / `OPENAI_API_KEY`（`viz.config.json` 设 `codex.useDefaultModel=true`，无需 MiniMax）；opencode 也可按上文换任意 Anthropic 兼容 provider |
 
-> 默认模型 `MiniMax-M3`（Anthropic 兼容端点）。想换其他 provider/模型：改 `data/models.json`
+> 默认模型 `MiniMax-M3`（Anthropic 兼容端点）。想换其他 provider/模型：改 `data/config/models.json`
 > （opencode）或 `data/codex-home/config.toml` 由 server 启动时重建（codex，见 server.mjs 的
 > `CODEX_CONFIG`）——翻译代理的目标端点在 server.mjs 的 `LLM_UPSTREAM`。
 
@@ -48,7 +48,7 @@
   `OPENAI_API_KEY`）。此时流量不经过代理，**无提示词捕获**（界面徽标会标明），其余可视化全部可用。
 - **codex 走代理抓包**：保持 `false`，`model` 换成任意名（元数据警告可忽略），`upstream` 换成
   任意 **Anthropic 兼容** 端点，`upstreamEnvKey` 换成对应密钥的环境变量名。
-- **opencode 换模型/Provider**：编辑 `data/models.json`——它就是 opencode 的 provider 定义，
+- **opencode 换模型/Provider**：编辑 `data/config/models.json`——它就是 opencode 的 provider 定义，
   每个 provider 的 `api` 已指向本地代理 `http://127.0.0.1:45322/anthropic/v1`；新增 provider =
   照抄现有结构改 `id/name/api(保留指向代理)/models`，再把 `viz.config.json` 的
   `opencode.model` 指到 `providerID/modelID`（页面下拉默认选中它）。代理按 `upstream` 转发，
@@ -145,8 +145,18 @@ POST /responses → SSE 事件循环（:2250），一次 HTTP = 一步。工具�
 | 退出信号 | **落库**的 finish 字段（processor.ts:443） | **内存计算** needs_follow_up（turn.rs:423） |
 | 权限弹窗 | 有（permission.ask） | 无（execpolicy 判 Prompt 即拒，`exec_policy.rs:214`；隔离 rules 放行 powershell 包装命令，加载路径 :827） |
 
-> 行号对应的版本：opencode `1.18.21`（dev 分支）、codex `0.147.0+`（dev）。上游更新后行号可能漂移，
-> 以图上 file:line 为锚点重新核对。
+### 版本适配
+
+本工具通过**公开 CLI 接口**驱动两个 harness（REST/SSE + stdout JSONL），不侵入上游代码。
+页面页头实时显示探测到的 CLI 版本（`opencode --version` / `codex --version`）。
+
+| | 已验证版本 | 适配性 |
+|---|---|---|
+| opencode | **1.18.21**（2026-08 dev 分支行为） | 依赖 `/global/event` 事件词表与 v2 REST——**小版本升级通常兼容**；若上游改事件 schema 或路由，表现为事件缺失/报错，按 README 故障排查表核对 |
+| codex | **0.147.0+** | 依赖 `codex exec --json`（ThreadEvent 词表）与 Responses API（≥0.147 唯一协议）——同族小版本兼容；`wire_api=chat` 已被上游移除，回不去旧版 |
+
+流程图/节点说明里的 `file:line` 是**上述版本的源码锚点**，仅作阅读参考，不影响运行；上游升级后
+行号可能漂移（逻辑位置通常稳定），以文档描述的函数名/行为为准重新核对即可。
 
 ## 隐私与安全
 
@@ -176,11 +186,12 @@ POST /responses → SSE 事件循环（:2250），一次 HTTP = 一步。工具�
 harness-viz/
   server.mjs          零依赖 Node 后端（opencode serve 管理 + codex exec spawn + Responses↔Anthropic 翻译代理 + SSE 桥）
   index.html          单文件前端（harness 切换 + 双流程图 + 转写 + 权限弹窗 + 节点记录/说明）
+  viz.config.json     模型/上游配置（见「配置自己的模型」）
   AGENTS.md           给编码代理的仓库须知
   target-project/     演示项目（两个 harness 实际读写的目录）
   data/
     config/opencode.json   opencode 隔离配置（入库）
-    models.json            MiniMax 模型目录快照，api 指向本地代理（入库）
+    config/models.json     opencode 的 provider/模型目录定义，api 指向本地代理（入库；换模型改这里）
     codex-home/            codex 隔离 CODEX_HOME（启动时自动重建，不入库）
     opencode.db / events.jsonl / viz-server.log   运行时产物（不入库）
 ```
