@@ -1,0 +1,12 @@
+{
+  "upstream": "https://api.minimaxi.com",
+  "upstreamEnvKey": "MINIMAX_API_KEY",
+  "codex": {
+    "useDefaultModel": true,
+    "model": "gpt-6.1-sol"
+  },
+  "opencode": {
+    "model": "MiniMax-M3.1-Flash-Preview",
+    "limit": { "context": 1000000, "output": 524288 }
+  }
+}

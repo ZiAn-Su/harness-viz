@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Cache-Control" content="no-store" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>opencode Harness 实时可视化</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2d333b;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --orange: #d29922; --red: #f85149; --purple: #bc8cff; --cyan: #39c5cf;
+    --w-left: 720px; --w-right: 430px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  code, .mono { font-family: "Cascadia Code", Consolas, monospace; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 600; }
+  .badge { font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border); color: var(--dim); max-width: 100%; overflow-wrap: anywhere; }
+  .badge.on { color: var(--green); border-color: var(--green); }
+  .badge.busy { color: var(--orange); border-color: var(--orange); }
+  #sessionLabel { font-size: 11px; color: var(--dim); }
+  .spacer { flex: 1; }
+
+  #composer {
+    display: flex; gap: 8px; padding: 8px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: flex-end;
+  }
+  #prompt {
+    flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; resize: none; height: 52px; font-family: inherit;
+  }
+  #prompt:focus { outline: none; border-color: var(--accent); }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px; font-size: 12px; max-width: 250px; }
+  button { background: var(--accent); color: #0d1117; border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: var(--red); color: #fff; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  .colhead { font-size: 12px; color: var(--dim); font-weight: 600; padding: 10px 14px 6px; letter-spacing: .5px; }
+
+  /* 拖拽分隔条 */
+  .resizer { width: 6px; flex-shrink: 0; cursor: col-resize; background: transparent; }
+  .resizer:hover, .resizer.dragging { background: var(--accent); opacity: .5; }
+  body.resizing { cursor: col-resize; user-select: none; }
+
+  /* ── 左：流程图 ── */
+  #colFlow { width: var(--w-left); flex-shrink: 0; background: var(--panel); display: flex; flex-direction: column; }
+  #flowWrap { position: relative; flex: 1; overflow: auto; }
+  .flowsvg { position: absolute; inset: 0; width: 700px; height: 1070px; pointer-events: none; }
+  .fnode {
+    position: absolute; width: 172px; height: 64px; background: var(--panel2); border: 1.5px solid var(--border);
+    border-radius: 10px; padding: 7px 10px; transition: all .25s; z-index: 2; cursor: pointer; overflow: hidden;
+  }
+  .fnode:hover { border-color: var(--accent); }
+  .fnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.35); }
+  .fnode .t { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .fnode .s { font-size: 10px; color: var(--dim); margin-top: 2px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .fnode .cnt {
+    position: absolute; right: -6px; top: -8px; font-size: 10px; color: var(--bg);
+    background: var(--accent); border-radius: 9px; padding: 1px 7px; display: none; font-weight: 700;
+  }
+  .fnode.active { border-color: var(--green); box-shadow: 0 0 16px rgba(63,185,80,.45); }
+  .fnode.active .t::before { content: "●"; color: var(--green); animation: blink .8s infinite; }
+  .fnode.sub { border-style: dashed; }
+  .fnode.done { border-color: var(--accent); }
+  @keyframes blink { 50% { opacity: .2; } }
+  .flowsvg path, .flowsvg line { stroke: var(--dim); stroke-width: 1.5; fill: none; }
+  .flowsvg .lbl { fill: var(--dim); font-size: 10px; font-family: inherit; }
+  .flowsvg .lbl2 { fill: var(--cyan); font-size: 10px; }
+  .flowsvg .loop { stroke: var(--cyan); }
+  .flowsvg .subedge { stroke: var(--purple); }
+  .flowsvg .loopbox { stroke: var(--cyan); stroke-dasharray: 7 5; stroke-width: 1.5; fill: rgba(57,197,207,.04); }
+  .flowsvg .boxlbl { fill: var(--cyan); font-size: 11px; font-weight: 600; }
+
+  /* 扁平菱形判断节点：clip-path 双层实现边框 + 正置文字 */
+  .fdia { position: absolute; width: 170px; height: 64px; z-index: 2; cursor: pointer; transition: filter .25s; }
+  .fdia .shape { position: absolute; inset: 0; background: #4d5560; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); transition: background .25s; }
+  .fdia .inner { position: absolute; inset: 2px; background: var(--panel2); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+  .fdia .txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; font-weight: 600; padding: 6px 26px; line-height: 1.25; }
+  .fdia .cnt { position: absolute; right: 8px; top: -8px; font-size: 10px; color: var(--bg); background: var(--accent); border-radius: 9px; padding: 1px 7px; display: none; font-weight: 700; z-index: 3; }
+
+  /* ── 中：转写 ── */
+  #colTx { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #transcript { flex: 1; overflow-y: auto; padding: 12px 16px; }
+  .msg { margin-bottom: 10px; max-width: 900px; }
+  .msg .who { font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+  .msg .body { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px 13px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .body { background: #1f3b57; border-color: #28527a; }
+  .msg.child .who { color: var(--purple); }
+  .msg.child .body { border-style: dashed; }
+  .msg.tool .body { border-left: 3px solid var(--purple); font-size: 12px; }
+  .msg.tool .toolname { color: var(--purple); font-weight: 700; }
+  .msg.tool .status { font-size: 11px; padding: 1px 8px; border-radius: 8px; margin-left: 8px; }
+  .msg.tool .status.running, .msg.tool .status.pending { background: rgba(210,153,34,.2); color: var(--orange); }
+  .msg.tool .status.completed { background: rgba(63,185,80,.2); color: var(--green); }
+  .msg.tool .status.error { background: rgba(248,81,73,.2); color: var(--red); }
+  .msg.tool pre { margin-top: 6px; background: var(--bg); border-radius: 6px; padding: 8px; overflow: auto; font-size: 11px; color: var(--dim); max-height: 200px; }
+  .msg.reasoning .body { border-left: 3px solid var(--cyan); color: var(--dim); font-size: 12px; }
+  .msg.error .body { border-left: 3px solid var(--red); color: var(--red); }
+  .msg.info .body { border-left: 3px solid var(--orange); color: var(--dim); font-size: 12px; }
+
+  #logbar { flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--border); padding: 5px 16px; font-size: 12px; color: var(--dim); cursor: pointer; user-select: none; }
+  #eventlog { flex-shrink: 0; height: 0; overflow-y: auto; background: #0a0e14; border-top: 1px solid var(--border); font-size: 11px; padding: 0 16px; transition: height .25s; }
+  #eventlog.open { height: 180px; padding: 8px 16px; }
+  #eventlog .line { padding: 1px 0; white-space: nowrap; }
+  #eventlog .t { color: var(--accent); }
+  #eventlog .warn { color: var(--orange); }
+  #eventlog .tool { color: var(--purple); }
+  #eventlog .perm { color: var(--red); }
+  #eventlog .ok { color: var(--green); }
+  #eventlog .llm { color: var(--cyan); }
+
+  /* ── 右：节点面板（双 tab） ── */
+  #colLlm { width: var(--w-right); flex-shrink: 0; background: var(--panel); display: flex; flex-direction: column; }
+  #nodeTitle { font-size: 13px; font-weight: 700; padding: 10px 14px 0; }
+  #nodeTitle .sub { font-weight: 400; font-size: 11px; color: var(--dim); }
+  .tabs { display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--border); }
+  .tab {
+    font-size: 12px; padding: 6px 14px; cursor: pointer; color: var(--dim);
+    border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+  }
+  .tab.on { color: var(--text); background: var(--panel2); border-color: var(--border); }
+  #nodePanel { flex: 1; overflow-y: auto; padding: 8px 12px 16px; }
+
+  .rec { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; overflow: hidden; }
+  .rec > .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; font-size: 12px; overflow-wrap: anywhere; }
+  .rec > .hd:hover { background: rgba(88,166,255,.08); }
+  .rec .idx { background: var(--cyan); color: #062b2e; font-weight: 700; border-radius: 8px; padding: 1px 8px; font-size: 11px; }
+  .rec .tm { color: var(--dim); font-size: 11px; }
+  .rec .ms { margin-left: auto; color: var(--dim); font-size: 11px; }
+  .rec .meta { font-size: 11px; color: var(--dim); padding: 0 12px 8px; line-height: 1.5; }
+  .rec .detail { display: none; border-top: 1px solid var(--border); padding: 8px 12px; }
+  .rec.open .detail { display: block; }
+  .rec h4 { font-size: 11px; color: var(--cyan); margin: 8px 0 4px; }
+  .rec pre { background: var(--bg); border-radius: 6px; padding: 8px; font-size: 10.5px; color: var(--text); overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; }
+  .rec .mrole { font-weight: 700; font-size: 11px; }
+  .rec .mrole.user { color: var(--accent); }
+  .rec .mrole.assistant { color: var(--green); }
+  .rec .mrole.tool { color: var(--purple); }
+  .chip { display: inline-block; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; margin: 2px 3px 2px 0; font-size: 10px; color: var(--dim); }
+  .waiting { color: var(--orange); font-size: 11px; }
+  .empty { color: var(--dim); font-size: 12px; padding: 20px 6px; text-align: center; }
+
+  .sysbar { margin-left: 8px; }
+  button.mini { padding: 2px 10px; font-size: 11px; border-radius: 6px; background: var(--bg); color: var(--dim); border: 1px solid var(--border); font-weight: 400; margin-left: 6px; }
+  button.mini:hover { color: var(--text); border-color: var(--accent); }
+  .mdview { background: var(--bg); border-radius: 6px; padding: 10px 12px; font-size: 11.5px; line-height: 1.65; overflow: auto; max-height: 420px; word-break: break-word; }
+  .mdview h1, .mdview h2, .mdview h3, .mdview h4, .mdview h5, .mdview h6 { color: var(--accent); margin: 10px 0 4px; font-size: 12.5px; }
+  .mdview pre.mdcode { background: #0a0e14; border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow: auto; font-size: 10.5px; white-space: pre-wrap; }
+  .mdview code { color: var(--cyan); }
+  .mdview li { margin-left: 18px; }
+  .mdview p { margin: 6px 0; }
+
+  /* ── 流程图节点：边框统一同色，仅状态变色（选中=蓝 / 运行中=绿 / 未读=青点） ── */
+  .fnode, .fdia .shape { border-color: #4d5560; }
+  .fnode.sub { border-style: solid; }
+  .fnode.done { border-color: #4d5560; }
+  .fnode.unread::after {
+    content: ""; position: absolute; left: -5px; top: -5px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan);
+  }
+  .fdia.unread::after {
+    content: ""; position: absolute; left: calc(50% - 5px); top: -5px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); z-index: 3;
+  }
+  .fnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.35); }
+  .fdia.selected .shape { background: var(--accent); }
+  .fdia.selected { filter: drop-shadow(0 0 6px rgba(88,166,255,.6)); }
+  .fnode.active { border-color: var(--green); box-shadow: 0 0 16px rgba(63,185,80,.45); }
+  .fdia.active .shape { background: var(--green); }
+  .fdia.active { filter: drop-shadow(0 0 10px rgba(63,185,80,.7)); }
+  .fdia.active .txt::before { content: "●"; color: var(--green); animation: blink .8s infinite; margin-right: 3px; }
+
+  /* 缩放 & 平移 */
+  #flowWrap { overflow: hidden; cursor: grab; }
+  #flowWrap.panning { cursor: grabbing; }
+  #flowCanvas { position: absolute; top: 0; left: 0; width: 700px; height: 1070px; transform-origin: 0 0; }
+  /* 两个 harness 各一层流程图，同尺寸同几何纪律，切换显隐 */
+  #flowOpencode, #flowCodex { position: absolute; top: 0; left: 0; width: 700px; height: 1070px; }
+  .fnode.note { border-style: dashed; opacity: .92; }
+  #harnessSwitch { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .hbtn { padding: 5px 16px; font-size: 12px; border: none; border-radius: 0; background: var(--bg); color: var(--dim); cursor: pointer; }
+  .hbtn.on { background: var(--accent); color: #06202e; font-weight: 700; }
+
+  /* 节点说明 tab */
+  .doc { font-size: 12.5px; line-height: 1.7; padding: 6px 4px; }
+  .doc h3 { font-size: 13px; color: var(--accent); margin: 12px 0 4px; }
+  .doc h3:first-child { margin-top: 2px; }
+  .doc p { margin: 6px 0; color: var(--text); }
+  .doc li { margin: 4px 0 4px 18px; }
+  .doc code { color: var(--cyan); font-size: 11px; }
+  .doc table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
+  .doc th, .doc td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  .doc th { color: var(--dim); background: var(--bg); }
+
+  #permModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); align-items: center; justify-content: center; z-index: 100; }
+  #permModal.show { display: flex; }
+  #permModal .card { background: var(--panel); border: 1px solid var(--orange); border-radius: 12px; padding: 20px 24px; width: 520px; max-width: 90vw; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+  #permModal h3 { color: var(--orange); font-size: 15px; margin-bottom: 10px; }
+  #permModal .detail { font-size: 13px; margin: 8px 0; }
+  #permModal pre { background: var(--bg); border-radius: 6px; padding: 8px; font-size: 11px; color: var(--dim); max-height: 160px; overflow: auto; margin: 8px 0; }
+  #permModal .actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; }
+  #permModal .actions button { padding: 8px 16px; font-size: 13px; }
+  #evidenceBanner { padding: 6px 16px; font-size: 11px; color: var(--dim); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .evidence { color: var(--cyan); font-size: 10px; }
+  .doc a { color: var(--accent); overflow-wrap: anywhere; }
+  details.raw { margin: 6px 0; font-size: 11px; }
+  details.raw summary { cursor: pointer; color: var(--cyan); white-space: normal; }
+  details.raw pre, #eventlog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; background: var(--bg); padding: 8px; }
+  #eventlog .line { white-space: normal; overflow-wrap: anywhere; }
+  @media (max-width: 1200px) {
+    body { height: auto; min-height: 100vh; overflow: auto; }
+    header, #composer { flex-wrap: wrap; }
+    #prompt { min-width: 200px; }
+    main { flex-direction: column; }
+    #colFlow, #colLlm, #colTx { width: 100%; min-width: 0; }
+    #flowWrap { height: 650px; flex: none; overflow: auto; cursor: auto; touch-action: pan-x pan-y; }
+    #flowCanvas { position: relative; }
+    #transcript { min-height: 240px; max-height: 600px; }
+    #nodePanel { min-height: 240px; max-height: 650px; }
+    .resizer { display: none; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1 id="appTitle">opencode Harness 实时可视化</h1>
+    <div id="harnessSwitch">
+      <button class="hbtn on" data-h="opencode">opencode</button>
+      <button class="hbtn" data-h="codex">codex</button>
+    </div>
+    <span id="connBadge" class="badge">连接中…</span>
+    <span id="runBadge" class="badge">空闲</span>
+    <span id="sessionLabel"></span>
+    <span id="verBadge" class="badge mono" style="color:var(--dim)" title="运行版本与审计 sourceLock"></span>
+    <div class="spacer"></div>
+    <span class="badge mono" id="llmBadge" title="API 边界捕获请求数（含重试，不等于内部迭代）">捕获请求: 0</span>
+  </header>
+
+  <div id="composer">
+    <select id="modelSel" title="模型（opencode 可选）"></select>
+    <span id="codexModelBadge" class="badge mono" style="display:none;padding:7px 12px" title="模型与捕获方式以 /api/status 为准"></span>
+    <textarea id="prompt" placeholder="输入提示词，驱动真实 opencode harness…（Ctrl+Enter 运行）"></textarea>
+    <button class="ghost" id="demoBtn">演示任务</button>
+    <button id="runBtn">运行</button>
+    <button class="danger" id="abortBtn" disabled>中断</button>
+  </div>
+
+  <div id="evidenceBanner">源码机制简图，非内部函数 trace · 直接事件 / API 边界捕获 / 解析推断分别标记 · 未直接观测不代表跳过 · ended / completed 不代表任务正确</div>
+  <main>
+    <div id="colFlow">
+      <div class="colhead">HARNESS 流程图（点击节点看记录与说明 · 滚轮缩放 · 拖拽平移 · <a id="flowReset" style="cursor:pointer;color:var(--accent)">重置视图</a>）</div>
+      <div id="flowWrap"><div id="flowCanvas">
+        <div id="flowOpencode">
+        <svg id="flowSvg" class="flowsvg" viewBox="0 0 700 1070">
+          <defs>
+            <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker>
+            <marker id="ahc" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#39c5cf"/></marker>
+            <marker id="ahp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#bc8cff"/></marker>
+          </defs>
+          <!-- runLoop 循环体虚线框：框内 = 每一轮的完整流程 -->
+          <rect class="loopbox" x="16" y="170" width="514" height="870" rx="14"/>
+          <text class="boxlbl" x="296" y="192">V1 runLoop 源码机制简图</text>
+
+          <line x1="280" y1="68"   x2="280" y2="76"   marker-end="url(#ah)"/>
+          <path d="M280,140 L280,145 L170,145 L170,150" marker-end="url(#ah)"/>
+          <line x1="170" y1="214"  x2="170" y2="238"  marker-end="url(#ah)"/>
+          <line x1="170" y1="302"  x2="170" y2="326"  marker-end="url(#ah)"/>
+          <text class="lbl" x="178" y="320">否</text>
+          <line x1="170" y1="390"  x2="170" y2="414"  marker-end="url(#ah)"/>
+          <text class="lbl" x="178" y="408">无子任务</text>
+          <line x1="170" y1="478"  x2="170" y2="502"  marker-end="url(#ah)"/>
+          <text class="lbl" x="178" y="496">无压缩任务</text>
+          <line x1="170" y1="566"  x2="170" y2="590"  marker-end="url(#ah)"/>
+          <text class="lbl" x="178" y="584">未溢出</text>
+          <line x1="170" y1="654"  x2="170" y2="678"  marker-end="url(#ah)"/>
+          <text class="lbl" x="178" y="670">采样流内处理</text>
+          <line x1="170" y1="742"  x2="170" y2="766"  marker-end="url(#ah)"/>
+          <text class="lbl" x="178" y="760">是</text>
+          <line x1="170" y1="830"  x2="170" y2="854"  marker-end="url(#ah)"/>
+          <line x1="170" y1="918"  x2="170" y2="942"  marker-end="url(#ah)"/>
+          <!-- 左回环总线（实线）：压缩/溢出命中、⑦完成、模型未请求工具 → 回循环头 -->
+          <path class="loop" d="M85,446 L34,446"/>
+          <path d="M255,446 L548,446 L548,286 L556,286" marker-end="url(#ah)"/>
+          <text class="lbl" x="330" y="438">compaction 返回 stop → 结束</text>
+          <path class="loop" d="M85,534 L34,534"/>
+          <path class="loop" d="M85,710 L34,710"/>
+          <text class="lbl" x="93" y="702">否</text>
+          <path class="loop" d="M60,974 L34,974"/>
+          <path class="loop" d="M34,974 L34,182 L60,182" marker-end="url(#ahc)"/>
+          <text class="lbl2" x="34" y="1026">↩ 回到循环体开头</text>
+          <!-- 右回环（实线）：⑧ 子代理完成 → 回循环头 -->
+          <path class="subedge" d="M510,358 L520,358 L520,182 L282,182" marker-end="url(#ahp)"/>
+          <text class="lbl2" x="330" y="162">完成 → 回循环头</text>
+          <path class="subedge" d="M255,358 L330,358" marker-end="url(#ah)"/>
+          <text class="lbl" x="270" y="350">命中</text>
+          <path class="subedge" d="M280,798 L420,798 L420,390" marker-end="url(#ahp)"/>
+          <text class="lbl" x="310" y="788">普通 task 工具 → 子会话</text>
+          <line x1="255" y1="270" x2="556" y2="270" marker-end="url(#ah)"/>
+          <text class="lbl" x="420" y="262">是·break 退出</text>
+        </svg>
+
+        <div class="fnode" data-node="ui" style="left:190px;top:4px;width:180px"   id="fn-ui"><div class="t">① 网页输入</div><div class="s mono">POST /api/run</div></div>
+        <div class="fnode" data-node="server" style="left:190px;top:76px;width:180px"  id="fn-server"><div class="t">② Server 受理</div><div class="s mono">prompt.ts:1052 → 写 user 消息</div><span class="cnt" id="cnt-server"></span></div>
+        <div class="fnode" data-node="loop" style="left:60px;top:150px;width:220px" id="fn-loop"><div class="t">③ runLoop / 消息记录</div><div class="s mono">prompt.ts runLoop:1081 · 消息数≠迭代数</div><span class="cnt" id="cnt-loop"></span></div>
+        <div class="fdia" data-node="decide" style="left:85px;top:238px" id="fn-decide"><div class="shape"></div><div class="inner"></div><div class="txt">可退出循环?</div></div>
+        <div class="fdia" data-node="subflow1" style="left:85px;top:326px" id="fn-subflow1"><div class="shape"></div><div class="inner"></div><div class="txt">③b1 SubtaskPart?</div><span class="cnt" id="cnt-subflow1"></span></div>
+        <div class="fdia" data-node="subflow2" style="left:85px;top:414px" id="fn-subflow2"><div class="shape"></div><div class="inner"></div><div class="txt">③b2 有压缩任务?</div><span class="cnt" id="cnt-subflow2"></span></div>
+        <div class="fdia" data-node="subflow3" style="left:85px;top:502px" id="fn-subflow3"><div class="shape"></div><div class="inner"></div><div class="txt">③b3 上下文溢出?</div><span class="cnt" id="cnt-subflow3"></span></div>
+        <div class="fnode" data-node="llm" style="left:60px;top:590px;width:220px" id="fn-llm"><div class="t">④ LLM 调用</div><div class="s mono">⑥装配(:1226) ⑦建消息(:1257) ⑧streamText(:1272)</div><span class="cnt" id="cnt-llm"></span></div>
+        <div class="fdia" data-node="decide2" style="left:85px;top:678px" id="fn-decide2"><div class="shape"></div><div class="inner"></div><div class="txt">模型请求工具?</div></div>
+        <div class="fnode" data-node="tool" style="left:60px;top:766px;width:220px"  id="fn-tool"><div class="t">⑤ 流内工具调度</div><div class="s mono">tools.ts:59-132 · processor.ts:216/315</div><span class="cnt" id="cnt-tool"></span></div>
+        <div class="fnode" data-node="perm" style="left:60px;top:854px;width:220px"  id="fn-perm"><div class="t">⑥ 权限门</div><div class="s mono">permission/index.ts:67 ask → 挂起</div><span class="cnt" id="cnt-perm"></span></div>
+        <div class="fnode" data-node="exec" style="left:60px;top:942px;width:220px"  id="fn-exec"><div class="t">⑦ 执行 · 落库</div><div class="s mono">processor.ts:160 → SQLite</div><span class="cnt" id="cnt-exec"></span></div>
+        <div class="fnode sub" data-node="sub" style="left:330px;top:326px;width:180px" id="fn-sub"><div class="t">⑧ 子代理</div><div class="s mono">子 session 独立 runLoop</div><span class="cnt" id="cnt-sub"></span></div>
+        <div class="fnode done" data-node="done" style="left:556px;top:238px;width:128px" id="fn-done"><div class="t">⑨ 会话结束</div><div class="s mono">idle ≠ 成功 · prune forked</div></div>
+        </div>
+
+        <!-- ══════════ codex 流程图（几何纪律与 opencode 一致：viewBox=CSS=容器=700×1070，节点固定 64px） ══════════ -->
+        <div id="flowCodex" style="display:none">
+        <svg class="flowsvg" viewBox="0 0 700 1070">
+          <defs>
+            <marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker>
+            <marker id="ahc2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#39c5cf"/></marker>
+          </defs>
+          <!-- 源码机制，不是函数 trace；工具在采样流内调度。 -->
+          <rect class="loopbox" x="16" y="226" width="514" height="784" rx="14"/>
+          <text class="boxlbl" x="200" y="1002">run_turn loop（turn.rs:426）机制简图</text>
+
+          <line x1="280" y1="68"   x2="280" y2="76"   marker-end="url(#ah2)"/>
+          <path d="M280,140 L280,145 L170,145 L170,150" marker-end="url(#ah2)"/>
+          <line x1="170" y1="214"  x2="170" y2="238"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="302"  x2="170" y2="326"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="390"  x2="170" y2="414"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="478"  x2="170" y2="502"  marker-end="url(#ah2)"/>
+          <text class="lbl" x="178" y="496">流内路由，非 llm.response 后触发</text>
+          <line x1="170" y1="566"  x2="170" y2="590"  marker-end="url(#ah2)"/>
+          <text class="lbl" x="178" y="584">是</text>
+          <!-- 判断A 否：无工具调用 → 直接到判断B -->
+          <path d="M85,534 L40,534 L40,710 L85,710" marker-end="url(#ah2)"/>
+          <text class="lbl" x="28" y="616">否</text>
+          <line x1="170" y1="654"  x2="170" y2="678"  marker-end="url(#ah2)"/>
+          <line x1="170" y1="742"  x2="170" y2="766"  marker-end="url(#ah2)"/>
+          <text class="lbl" x="178" y="760">是</text>
+          <!-- 无跟进仍需 stop hooks；hook 可要求继续，不能直接画为保证 break。 -->
+          <path d="M255,710 L330,710" marker-end="url(#ah2)"/>
+          <text class="lbl" x="277" y="702">否</text>
+          <path d="M420,742 L420,752 L540,752 L540,830 L620,830 L620,854" marker-end="url(#ah2)"/>
+          <text class="lbl" x="546" y="816">正常收尾 → 压缩检查</text>
+          <path d="M510,710 L548,710 L548,270 L556,270" marker-end="url(#ah2)"/>
+          <text class="lbl" x="552" y="570">hook 提前结束</text>
+          <path d="M684,886 L692,886 L692,310 L620,310 L620,302" marker-end="url(#ah2)"/>
+          <path class="loop" d="M420,678 L420,270 L280,270" marker-end="url(#ahc2)"/>
+          <text class="lbl2" x="425" y="470">hook 可继续</text>
+          <!-- ③c 命中：压缩后继续循环（左回环总线 → 回 ④ 左缘） -->
+          <path class="loop" d="M85,798 L34,798"/>
+          <text class="lbl" x="93" y="790">命中</text>
+          <path class="loop" d="M34,798 L34,270 L60,270" marker-end="url(#ahc2)"/>
+          <text class="lbl2" x="34" y="985">↩ 回到循环体开头</text>
+          <!-- ③c 未命中：直接回 ④（右内回边） -->
+          <path class="loop" d="M255,798 L300,798 L300,270 L280,270" marker-end="url(#ahc2)"/>
+          <text class="lbl" x="258" y="830">未命中</text>
+          <!-- ⑦ → 沙箱说明 -->
+          <line x1="280" y1="622" x2="330" y2="622" marker-end="url(#ah2)"/>
+        </svg>
+
+        <div class="fnode" data-node="c-ui" style="left:190px;top:4px;width:180px"   id="fn-c-ui"><div class="t">① 网页输入</div><div class="s mono">POST /api/run → spawn codex exec</div></div>
+        <div class="fnode" data-node="c-server" style="left:190px;top:76px;width:180px"  id="fn-c-server"><div class="t">② exec 受理</div><div class="s mono">exec/lib.rs run_main → run_turn</div><span class="cnt" id="cnt-c-server"></span></div>
+        <div class="fnode" data-node="c-precompact" style="left:60px;top:150px;width:220px" id="fn-c-precompact"><div class="t">③ 预采样压缩检查</div><div class="s mono">turn.rs:179-221 / fn:1298</div></div>
+        <div class="fnode" data-node="c-loop" style="left:60px;top:238px;width:220px" id="fn-c-loop"><div class="t">④ turn 开始记录</div><div class="s mono">机制 loop:426 · 事件不计内部迭代</div><span class="cnt" id="cnt-c-loop"></span></div>
+        <div class="fnode" data-node="c-history" style="left:60px;top:326px;width:220px" id="fn-c-history"><div class="t">⑤ 历史 / 请求边界</div><div class="s mono">clone_history:515 → build_prompt:1583</div><span class="cnt" id="cnt-c-history"></span></div>
+        <div class="fnode" data-node="c-llm" style="left:60px;top:414px;width:220px" id="fn-c-llm"><div class="t">⑥ LLM 采样</div><div class="s mono">sampling:2519 · retries:1647 · HTTP/WS</div><span class="cnt" id="cnt-c-llm"></span></div>
+        <div class="fdia" data-node="c-decide2" style="left:85px;top:502px" id="fn-c-decide2"><div class="shape"></div><div class="inner"></div><div class="txt">有工具调用?</div></div>
+        <div class="fnode" data-node="c-tool" style="left:60px;top:590px;width:220px"  id="fn-c-tool"><div class="t">⑦ 流内工具 · 收割结果</div><div class="s mono">stream_events_utils:315 · drain:2472</div><span class="cnt" id="cnt-c-tool"></span></div>
+        <div class="fdia" data-node="c-decide" style="left:85px;top:678px" id="fn-c-decide"><div class="shape"></div><div class="inner"></div><div class="txt">需要跟进?</div></div>
+        <div class="fdia" data-node="c-compact" style="left:85px;top:766px" id="fn-c-compact"><div class="shape"></div><div class="inner"></div><div class="txt">③c 中途压缩?</div><span class="cnt" id="cnt-c-compact"></span></div>
+        <div class="fnode note" data-node="c-sandbox" style="left:330px;top:590px;width:180px" id="fn-c-sandbox"><div class="t">沙箱 · 审批</div><div class="s mono">exec/lib.rs:571 默认 Never · 例外:758</div></div>
+        <div class="fnode" data-node="c-stop" style="left:330px;top:678px;width:180px" id="fn-c-stop"><div class="t">stop hooks</div><div class="s mono">turn.rs:653 · 可继续而非保证 break</div></div>
+        <div class="fnode note" data-node="c-postcompact" style="left:556px;top:854px;width:128px" id="fn-c-postcompact"><div class="t">turn 后压缩</div><div class="s mono">turn.rs:713 · 条件性收尾机制</div></div>
+        <div class="fnode done" data-node="c-done" style="left:556px;top:238px;width:128px" id="fn-c-done"><div class="t">⑧ turn / 进程结束</div><div class="s mono">turn.rs:793 · tasks/mod.rs:812</div><span class="cnt" id="cnt-c-done"></span></div>
+        </div>
+      </div></div>
+    </div>
+    <div class="resizer" id="rz1"></div>
+
+    <div id="colTx">
+      <div class="colhead">实时转写（user / assistant / 工具调用）</div>
+      <div id="transcript"></div>
+      <div id="logbar">▸ 原始事件日志 <span id="logCount">(0)</span></div>
+      <div id="eventlog"></div>
+    </div>
+    <div class="resizer" id="rz2"></div>
+
+    <div id="colLlm">
+      <div id="nodeTitle">…</div>
+      <div class="tabs">
+        <div class="tab on" data-tab="records">运行记录</div>
+        <div class="tab" data-tab="doc">节点说明</div>
+      </div>
+      <div id="nodePanel"></div>
+    </div>
+  </main>
+
+  <div id="permModal">
+    <div class="card">
+      <h3>⚠ 权限询问（Permission.ask — permission/index.ts:67，工具已挂起等待答复）</h3>
+      <div class="detail" id="permDetail"></div>
+      <pre id="permMeta"></pre>
+      <div class="actions">
+        <button class="danger" data-reply="reject">拒绝</button>
+        <button class="ghost" data-reply="once">允许一次</button>
+        <button data-reply="always">总是允许</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ═══════════ 工具函数 ═══════════ */
+const escapeHtml = (s) => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML }
+const now = () => new Date().toLocaleTimeString("zh-CN") + "." + String(Date.now() % 1000).padStart(3, "0")
+
+/* ═══════════ 流程图高亮 ═══════════ */
+const activeTimers = {}
+function pulse(id, ms = 1800) {
+  const el = document.getElementById("fn-" + id); if (!el) return
+  el.classList.add("active"); clearTimeout(activeTimers[id])
+  activeTimers[id] = setTimeout(() => el.classList.remove("active"), ms)
+}
+function bump(id) {
+  const c = document.getElementById("cnt-" + id); if (!c) return
+  c.style.display = "inline-block"; c.textContent = (parseInt(c.textContent || "0") + 1)
+}
+
+/* ═══════════ 节点记录存储 + 双 tab 面板 ═══════════ */
+let harness = "opencode"          // 当前查看的 harness（切换按钮）
+const NAMES = {
+  opencode: {
+    ui: "① 网页输入", server: "② Server 受理", loop: "③ runLoop / 消息记录",
+    decide: "判断 · 可退出循环?",
+    subflow1: "③b1 SubtaskPart?", subflow2: "③b2 有压缩任务?", subflow3: "③b3 上下文溢出?",
+    llm: "④ LLM 调用", decide2: "判断 · 模型请求工具?",
+    tool: "⑤ 工具调度", perm: "⑥ 权限门",
+    exec: "⑦ 执行 · 落库", done: "⑨ 会话结束", sub: "⑧ 子代理",
+  },
+  codex: {
+    "c-ui": "① 网页输入", "c-server": "② exec 受理", "c-precompact": "③ 预采样压缩检查",
+    "c-loop": "④ turn 开始记录", "c-history": "⑤ 历史 / 请求边界", "c-llm": "⑥ LLM 采样",
+    "c-decide2": "判断 · 有工具调用?", "c-tool": "⑦ 流内工具 · 收割结果",
+    "c-decide": "判断 · 需要跟进?", "c-compact": "③c 中途压缩?",
+    "c-sandbox": "沙箱 · 审批", "c-stop": "stop hooks", "c-postcompact": "turn 后压缩", "c-done": "⑧ turn / 进程结束",
+  },
+}
+const nodeNames = () => NAMES[harness]
+const eventsByHarness = { opencode: [], codex: [] }   // 切换 harness 时回放用
+const rootByHarness = { opencode: null, codex: null }
+let currentRunID = null
+const store = {}              // nodeId → [{seq,time,title,meta,kind,data}]
+let selectedNode = "llm"      // 默认看 LLM 调用明细
+let activeTab = "records"
+let currentEvent = null
+let llmRevision = 0
+const openRecords = new Set()
+const jsonText = value => typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? "null"
+const rawDetail = (title, value) => `<details class="raw"><summary>${escapeHtml(title)}</summary><pre>${escapeHtml(jsonText(value))}</pre></details>`
+
+function addRecord(nodeId, title, meta, kind, data, evidence = "direct") {
+  const list = store[nodeId] ??= []
+  const rec = { seq: list.length + 1, time: currentEvent ? currentEvent.receivedAt ?? "receivedAt 未提供" : now(), title, meta, kind, data,
+    evidence, source: currentEvent ? currentEvent.source ?? currentEvent.properties?.source ?? "未标注" : "viz", event: currentEvent }
+  list.push(rec)
+  if (nodeId === selectedNode && activeTab === "records") renderRecords()
+  const el = document.getElementById("fn-" + nodeId)
+  if (el && nodeId !== selectedNode) el.classList.add("unread")
+}
+
+/* 身份相同的消息 / part / item 更新为最新完整快照，原始更新仍保留在事件日志。 */
+function updateRec(nodeId, pred, patch) {
+  const rec = (store[nodeId] ?? []).find(pred)
+  if (!rec) return
+  rec.data = patch
+  if (currentEvent) {
+    rec.event = currentEvent; rec.source = currentEvent.source ?? currentEvent.properties?.source ?? "未标注"; rec.time = currentEvent.receivedAt ?? "receivedAt 未提供"
+  }
+  if (nodeId === selectedNode && activeTab === "records") renderRecords()
+}
+let lastFinishInfo = null   // 最后一次 assistant finish 信息，用于「退出循环」记录的输出
+
+function selectNode(id) {
+  selectedNode = id
+  document.querySelectorAll(".fnode,.fdia").forEach(e => {
+    e.classList.toggle("selected", e.dataset.node === id)
+    if (e.dataset.node === id) e.classList.remove("unread")   // 清除"有新记录"圆点
+  })
+  document.getElementById("nodeTitle").innerHTML =
+    `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} 条记录</span>`
+  renderPanel()
+}
+document.querySelectorAll(".fnode,.fdia").forEach(el => el.onclick = () => selectNode(el.dataset.node))
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  activeTab = t.dataset.tab
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t))
+  renderPanel()
+})
+function renderPanel() { activeTab === "records" ? renderRecords() : renderDoc() }
+
+function renderRecords() {
+  const list = store[selectedNode] ?? []
+  document.getElementById("nodeTitle").innerHTML =
+    `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} 条记录</span>`
+  const panel = document.getElementById("nodePanel")
+  if (!list.length) { panel.innerHTML = `<div class="empty">未直接观测<br>无记录不证明该机制被跳过；此图不是内部函数 trace。</div>`; return }
+  panel.innerHTML = ""
+  for (const rec of list) {
+    const div = document.createElement("div"); div.className = "rec"
+    div.innerHTML = `<div class="hd"><span class="idx">${rec.seq}</span><b>${escapeHtml(rec.title)}</b><span class="tm">${escapeHtml(rec.time)}</span></div>
+      <div class="meta evidence">${{ direct: "直接事件", boundary: "API 边界捕获", inferred: "解析推断（非执行证明）" }[rec.evidence]} · source=${escapeHtml(rec.source)}</div>
+      ${rec.meta ? `<div class="meta">${rec.meta}</div>` : ""}
+      <div class="detail"><div class="waiting">展开加载中…</div></div>`
+    div.querySelector(".hd").onclick = () => toggleRecDetail(div, rec)
+    panel.appendChild(div)
+    if (openRecords.has(selectedNode + ":" + rec.seq)) toggleRecDetail(div, rec)
+  }
+  panel.scrollTop = panel.scrollHeight
+}
+
+async function toggleRecDetail(div, rec) {
+  div.classList.toggle("open")
+  const key = selectedNode + ":" + rec.seq
+  if (div.classList.contains("open")) openRecords.add(key)
+  else openRecords.delete(key)
+  const detail = div.querySelector(".detail")
+  if (!div.classList.contains("open")) return
+  if (rec.kind === "llm") {
+    const revision = llmRevision
+    try {
+      const res = await fetch("/api/llm-calls", { cache: "no-store" })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { calls = [] } = await res.json()
+      if (!div.isConnected || !div.classList.contains("open")) return
+      if (revision !== llmRevision) { div.classList.remove("open"); return toggleRecDetail(div, rec) }
+      const c = calls.find(x => x.index === rec.data.index && x.harness === (rec.event?.harness ?? harness))
+      detail.innerHTML = (c ? renderLlmCall(c) : "<div class='waiting'>尚未捕获详情，可重新展开。</div>") + rawDetail("原始 request 事件", rec.event) + (rec.data.responseEvent ? rawDetail("原始 response 事件", rec.data.responseEvent) : "")
+    } catch (err) { detail.innerHTML = `<div class="waiting">加载失败，可重新展开：${escapeHtml(String(err))}</div>` }
+  } else {
+    detail.innerHTML = `<pre>${escapeHtml(jsonText(rec.data))}</pre>` + (rec.event ? rawDetail("原始事件 envelope（完整）", rec.event) : "")
+  }
+}
+
+function renderDoc() {
+  document.getElementById("nodePanel").innerHTML = `<div class="doc">${DOCS[harness][selectedNode] ?? "暂无说明"}</div>`
+}
+
+/* 捕获报文是 API 边界事实，不是服务端最终提示词或完整推理。 */
+function renderLlmCall(c) {
+  const original = c.request ?? {}
+  const r = original.request ?? original
+  const codex = c.harness === "codex"
+  let html = `<div class="meta">source=${escapeHtml(c.source ?? "未标注")} · 捕获边界内容完整展示，不代表服务端最终提示词、完整逻辑历史或完整 reasoning。</div>`
+  html += rawDetail("原始请求 JSON（完整，含 WS envelope）", original)
+  const previous = r.previous_response_id ?? original.previous_response_id ?? c.trace?.previousResponseID
+  if (codex) {
+    html += `<h4>previous_response_id</h4><pre>${escapeHtml(previous ?? "未提供")}</pre>`
+    if (previous || original.type === "response.create" || /websocket|\bws\b/i.test(c.trace?.transport ?? ""))
+      html += `<div class="waiting">WebSocket / 续接请求可能只含增量 input，不是完整逻辑历史；不能用项数推定 clone_history 内容。</div>`
+  }
+  const sys = codex ? r.instructions : r.system
+  const sysText = typeof sys === "string" ? sys : sys == null ? "" : jsonText(sys)
+  if (sysText) {
+    sysTextCache[c.index] = sysText
+    html += `<h4>${codex ? "instructions（独立协议字段，不等同 system）" : "system（捕获字段）"} · ${sysText.length} 字符<span class="sysbar"><button class="mini" onclick="copySys(${Number(c.index)},this)">复制</button><button class="mini" onclick="dlSys(${Number(c.index)})">下载 .md</button><button class="mini" onclick="toggleSys(${Number(c.index)},this)">预览</button></span></h4>
+      <pre id="sys-${c.index}">${escapeHtml(sysText)}</pre>
+      <div id="sysmd-${c.index}" class="mdview" style="display:none"></div>`
+  }
+  html += rawDetail(codex ? "input（捕获字段，完整）" : "messages（捕获字段，完整）", codex ? r.input : r.messages)
+  html += rawDetail("tools（完整原始定义，保留所有字段）", r.tools)
+  const embeddedTools = (r.input ?? []).filter(item => item.type === "additional_tools")
+  if (embeddedTools.length) html += rawDetail("input.additional_tools（Responses Lite 内嵌工具定义）", embeddedTools)
+  if (codex && r.tools == null && !embeddedTools.length) html += `<div class="waiting">此请求未携带工具定义；续接可能继承既有定义，不能解释为模型没有工具。</div>`
+  if (c.anthropicRequest) html += rawDetail("翻译后实际 Anthropic 请求（完整 JSON，不保证内容等价）", c.anthropicRequest)
+  if (c.translationWarnings) html += rawDetail("translationWarnings", c.translationWarnings)
+  if (c.rawResponse != null) html += rawDetail("原始响应（完整捕获内容）", c.rawResponse)
+  else if (c.response) html += `<div class="waiting">服务未提供 rawResponse；以下只有解析摘要，不能称为原始响应。</div>`
+  if (c.response) {
+    html += rawDetail("响应解析摘要（不等于原始响应）", c.response)
+    if (c.response.thinking) html += `<h4>可见 reasoning / thinking 摘要（非完整内部推理）</h4><pre>${escapeHtml(c.response.thinking)}</pre>`
+    if (c.response.text) html += `<h4>文本输出（完整）</h4><pre>${escapeHtml(c.response.text)}</pre>`
+    html += rawDetail("toolUses（完整解析结果，非执行证明）", c.response.toolUses ?? [])
+  } else html += `<div class="waiting">响应尚未捕获；收到 response 事件后自动刷新已展开记录。</div>`
+  if (c.trace) html += rawDetail("trace（捕获元数据）", c.trace)
+  if (c.error) html += rawDetail("错误", c.error)
+  return html
+}
+
+/* ═══════════ system prompt：复制 / 下载 / 原始-预览切换 ═══════════ */
+const sysTextCache = {}
+function copySys(i, btn) {
+  navigator.clipboard.writeText(sysTextCache[i] ?? "")
+  btn.textContent = "已复制 ✓"; setTimeout(() => (btn.textContent = "复制"), 1200)
+}
+function dlSys(i) {
+  const blob = new Blob([sysTextCache[i] ?? ""], { type: "text/markdown;charset=utf-8" })
+  const a = document.createElement("a")
+  a.href = URL.createObjectURL(blob); a.download = `system-prompt-llm-${i}.md`; a.click()
+  URL.revokeObjectURL(a.href)
+}
+function toggleSys(i, btn) {
+  const pre = document.getElementById(`sys-${i}`), md = document.getElementById(`sysmd-${i}`)
+  if (md.style.display !== "none") { md.style.display = "none"; pre.style.display = ""; btn.textContent = "预览"; return }
+  md.innerHTML = miniMd(sysTextCache[i] ?? "")
+  md.style.display = ""; pre.style.display = "none"; btn.textContent = "原始"
+}
+/* 极简 Markdown 渲染（预览用）：代码块/标题/列表/加粗/行内代码 */
+function miniMd(src) {
+  const inline = (t) => escapeHtml(t).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>")
+  let html = "", inCode = false, inList = false, para = []
+  const flushPara = () => { if (para.length) { html += `<p>${para.map(inline).join("<br>")}</p>`; para = [] } }
+  const flushList = () => { if (inList) { html += "</ul>"; inList = false } }
+  for (const line of src.split("\n")) {
+    if (line.trimStart().startsWith("```")) { flushPara(); flushList(); html += inCode ? "</pre>" : `<pre class="mdcode">`; inCode = !inCode; continue }
+    if (inCode) { html += escapeHtml(line) + "\n"; continue }
+    const h = line.match(/^(#{1,6})\s+(.*)$/)
+    if (h) { flushPara(); flushList(); html += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`; continue }
+    if (/^\s*[-*]\s+/.test(line)) { flushPara(); if (!inList) { html += "<ul>"; inList = true } html += `<li>${inline(line.replace(/^\s*[-*]\s+/, ""))}</li>`; continue }
+    if (!line.trim()) { flushPara(); flushList(); continue }
+    para.push(line)
+  }
+  flushPara(); flushList()
+  if (inCode) html += "</pre>"
+  return html
+}
+
+/* ═══════════ 转写 ═══════════ */
+const transcript = document.getElementById("transcript")
+const bubbles = {}, toolCards = {}, partVocab = {}
+let currentSession = null
+const sessionParents = new Map(), pendingSessionEvents = [], pendingDeltas = new Map()
+const toolStates = new Map(), codexItems = new Map(), terminalSessions = new Set(), sessionErrors = new Map()
+const assistantSnapshots = new Map(), seenPartMarkers = new Set(), seenLlmRequests = new Set(), seenEventIDs = new Set()
+
+function scrollBottom() { transcript.scrollTop = transcript.scrollHeight }
+function sessionID(p) { return p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID ?? (!p.info?.role ? p.info?.id : undefined) }
+function knownSession(id) {
+  const seen = new Set()
+  while (id && !seen.has(id)) {
+    if (id === currentSession) return true
+    seen.add(id); id = sessionParents.get(id)
+  }
+  return false
+}
+function isChild(p) { const id = sessionID(p); return id !== currentSession && knownSession(id) }
+function flushSessionEvents() {
+  for (let i = 0; i < pendingSessionEvents.length;) {
+    const evt = pendingSessionEvents[i]
+    const p = evt.properties ?? {}
+    const id = sessionID(p) ?? (/^session\.(created|updated)$/.test(evt.type) ? p.info?.id : null)
+    if (id ? !knownSession(id) : !(evt.type.startsWith("llm.") && currentSession)) { i++; continue }
+    pendingSessionEvents.splice(i, 1)
+    const previous = currentEvent; currentEvent = evt
+    try { processEvent(evt) } finally { currentEvent = previous }
+  }
+}
+function addMsg(kind, who) {
+  const div = document.createElement("div"); div.className = "msg " + kind
+  div.innerHTML = `<div class="who">${who}</div><div class="body"></div>`
+  transcript.appendChild(div); scrollBottom()
+  return div.querySelector(".body")
+}
+const addUser = (t) => addMsg("user", "你 · 提交内容（viz.run）").textContent = t
+const addInfo = (t) => addMsg("info", "harness").textContent = t
+const addError = (t) => addMsg("error", "错误").textContent = t
+
+function appendText(partID, delta, kind, child) {
+  if (!delta) return
+  if (partVocab[partID] && partVocab[partID] !== kind) return
+  partVocab[partID] = kind
+  let b = bubbles[partID]
+  if (!b) {
+    const who = child ? "子代理 · assistant（子 session）"
+      : kind === "reasoning" ? "模型思考 · reasoning" : "助手 · assistant（llm.ts → streamText）"
+    b = bubbles[partID] = addMsg((child ? "child " : "") + (kind === "reasoning" ? "reasoning" : "assistant"), who)
+  }
+  b.textContent += delta; scrollBottom()
+}
+
+function toolCard(partID, tool, state, child) {
+  let el = toolCards[partID]
+  if (!el) {
+    el = addMsg((child ? "child " : "") + "tool", (child ? "子代理 · " : "") + "工具 part 状态（processor.ts:216/315/160）")
+    toolCards[partID] = el
+  }
+  const status = state?.status ?? "running"
+  const statusCN = { pending: "待执行", running: "执行中", completed: "已完成", error: "失败" }[status] ?? status
+  const statusClass = ["pending", "running", "completed", "error"].includes(status) ? status : ""
+  let html = `<span class="toolname">${escapeHtml(tool ?? "?")}</span><span class="status ${statusClass}">${escapeHtml(statusCN)}</span>`
+  if (state?.title) html += ` <span style="color:var(--dim)">${escapeHtml(String(state.title))}</span>`
+  if (state?.input && Object.keys(state.input).length) html += `<pre>入参:\n${escapeHtml(JSON.stringify(state.input, null, 2))}</pre>`
+  if (status === "completed" && state?.output != null) html += rawDetail("结果（完整）", state.output)
+  if (status === "error" && state?.error) html += `<pre>错误:\n${escapeHtml(String(state.error))}</pre>`
+  el.innerHTML = html; scrollBottom()
+}
+
+/* ═══════════ 事件日志 ═══════════ */
+const eventlog = document.getElementById("eventlog"), logCount = document.getElementById("logCount")
+let logN = 0
+let loggedEvents = new WeakSet()
+document.getElementById("logbar").onclick = () => {
+  eventlog.classList.toggle("open")
+  document.getElementById("logbar").firstChild.textContent = (eventlog.classList.contains("open") ? "▾" : "▸") + " 原始事件日志 "
+}
+function log(type, summary, cls = "", evt = currentEvent) {
+  if (evt && loggedEvents.has(evt)) return
+  if (evt) loggedEvents.add(evt)
+  logN++; logCount.textContent = `(${logN})`
+  const line = document.createElement("div"); line.className = "line " + cls
+  line.innerHTML = `<span class="t">${escapeHtml(evt ? evt.receivedAt ?? "receivedAt 未提供" : now())}</span> <b>${escapeHtml(type)}</b> ${escapeHtml(summary)} <span class="evidence">source=${escapeHtml(evt ? evt.source ?? evt.properties?.source ?? "未标注" : "viz")}</span>` + (evt ? rawDetail("原始事件 JSON（完整）", evt) : "")
+  eventlog.appendChild(line); eventlog.scrollTop = eventlog.scrollHeight
+}
+
+/* ═══════════ 权限弹窗 ═══════════ */
+const permModal = document.getElementById("permModal")
+let pendingPerm = null
+function showPerm(p) {
+  pendingPerm = p
+  document.getElementById("permDetail").innerHTML =
+    `权限类型：<b>${escapeHtml(p.permission)}</b>　匹配：<code>${escapeHtml((p.patterns || []).join(", "))}</code>` +
+    (p.tool ? `<br>工具调用 callID <code>${escapeHtml(p.tool.callID)}</code>` : "")
+  document.getElementById("permMeta").textContent = JSON.stringify(p.metadata ?? {}, null, 2)
+  permModal.classList.add("show"); pulse("perm", 60000)
+}
+permModal.querySelectorAll("button[data-reply]").forEach(btn => btn.onclick = async () => {
+  if (!pendingPerm) return
+  const request = pendingPerm, reply = btn.dataset.reply, target = harness
+  permModal.classList.remove("show")
+  try {
+    const res = await fetch("/api/permission", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestID: request.id, reply }) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (harness !== target) return
+    addRecord("perm", `本地答复请求已接受: ${reply}`, "API 接受请求，实际工具是否恢复以直接事件为准。", "json", { requestID: request.id, reply })
+    if (pendingPerm?.id === request.id) pendingPerm = null
+  } catch (err) {
+    if (harness !== target) return
+    addError("权限答复请求失败：" + String(err))
+    if (pendingPerm?.id === request.id) permModal.classList.add("show")
+  }
+})
+
+/* ═══════════ 事件处理（含节点归档） ═══════════ */
+const runBadge = document.getElementById("runBadge")
+let runState = "idle"
+function setRun(state) {
+  runState = state
+  runBadge.className = "badge" + (state === "busy" ? " busy" : "")
+  runBadge.textContent = { idle: "空闲", busy: "运行中…", ended: "已结束（非成功判定）", failed: "失败", interrupted: "已中断" }[state] ?? state
+  runBadge.style.color = state === "failed" ? "var(--red)" : state === "interrupted" ? "var(--orange)" : ""
+  document.getElementById("abortBtn").disabled = state !== "busy"
+  document.getElementById("runBtn").disabled = state === "busy"
+}
+
+const seenAssistantMsgs = new Set()
+const llmBadge = document.getElementById("llmBadge")
+let llmCallCount = 0
+
+function endSession(p, child) {
+  const id = p.sessionID
+  if (terminalSessions.has(id)) return
+  terminalSessions.add(id)
+  const error = sessionErrors.get(id)
+  const final = child ? [...assistantSnapshots.values()].filter(x => x.sessionID === id).at(-1) : lastFinishInfo
+  const interrupted = final?.error?.name === "MessageAbortedError" || error?.name === "MessageAbortedError" || runState === "interrupted"
+   if (!child) setRun(interrupted ? "interrupted" : final?.error || final?.finish === "error" || error?.name === "SubmissionError" ? "failed" : "ended")
+  pulse(child ? "sub" : "done", 4000)
+  addRecord(child ? "sub" : "done", "会话 idle（已结束，非成功判定）", "session.status idle 为 canonical；session.idle 冗余事件不重复终态。退出路径未直接观测，prune 是 forked 工作。", "json", { status: p, lastAssistant: final, errorEvidence: error })
+}
+
+function handleEvent(evt) {
+  if (evt.type === "viz.run") {
+    if (currentRunID && evt.runID && evt.runID !== currentRunID) {
+      resetUI(); rootByHarness[harness] = null
+      eventsByHarness[harness] = eventsByHarness[harness].filter(e => !e.runID || e.runID === evt.runID)
+    }
+    currentRunID = evt.runID ?? null
+  }
+  const key = evt.id == null ? null : `${evt.harness}:${evt.runID}:${evt.id}`
+  if (key && seenEventIDs.has(key)) return
+  if (key) seenEventIDs.add(key)
+  const previous = currentEvent; currentEvent = evt
+  try {
+    log(evt.type, jsonText(evt.properties ?? {}).slice(0, 90))
+    if (evt.runID && currentRunID && evt.runID !== currentRunID && evt.type !== "viz.connected") return
+    const p = evt.properties ?? {}
+    if (evt.type === "viz.run") {
+      if (p.sessionID) currentSession = rootByHarness[evt.harness ?? harness] = p.sessionID
+      setRun("busy")
+      processEvent(evt); flushSessionEvents(); return
+    }
+    if (evt.harness !== "codex" && !evt.type.startsWith("codex.")) {
+      if (/^session\.(created|updated)$/.test(evt.type) && p.info?.id && p.info.parentID)
+        sessionParents.set(p.info.id, p.info.parentID)
+      if (p.sessionID && p.parentSessionID) sessionParents.set(p.sessionID, p.parentSessionID)
+      const metadata = p.part?.type === "tool" && p.part.tool === "task" ? p.part.state?.metadata : null
+      if (metadata?.sessionId && (metadata.parentSessionId ?? sessionID(p))) sessionParents.set(metadata.sessionId, metadata.parentSessionId ?? sessionID(p))
+      const id = sessionID(p) ?? (/^session\.(created|updated)$/.test(evt.type) ? p.info?.id : null)
+      if (!id && /^(session\.|message\.)/.test(evt.type)) return
+      if (id && !knownSession(id)) {
+        pendingSessionEvents.push(evt); flushSessionEvents(); return
+      }
+      if (evt.type.startsWith("llm.") && !currentSession) { pendingSessionEvents.push(evt); return }
+    }
+    processEvent(evt); flushSessionEvents()
+  } finally { currentEvent = previous }
+}
+
+function captureLlmEvent(evt) {
+  const p = evt.properties ?? {}, codex = evt.harness === "codex"
+  const node = codex ? "c-llm" : "llm"
+  const child = !codex && isChild(p)
+  llmRevision++
+  if (evt.type === "llm.request") {
+    const key = `${evt.harness}:${p.index}`
+    if (seenLlmRequests.has(key)) return
+    seenLlmRequests.add(key)
+    llmCallCount++; llmBadge.textContent = "捕获请求: " + llmCallCount
+    pulse(node, 60000); bump(node)
+    const tools = Array.isArray(p.tools) ? p.tools : []
+    const meta = `${child ? "已知子会话 · " : ""}客户端捕获边界，不计内部迭代 · model=${escapeHtml(p.model ?? "?")}<br>${codex ? "instructions 字段（不是全部指令）" : "system 字段"} ${escapeHtml(p.systemChars ?? "?")} 字符 · ${codex ? "input" : "messages"} ${escapeHtml(p.messages ?? "?")} 项 · tools ${Array.isArray(p.tools) ? tools.length + " 个" : "未随此请求传输／可能继承"}${p.toolsLocation ? " · " + escapeHtml(p.toolsLocation) : ""}<br>${tools.map(t => `<span class="chip">${escapeHtml(typeof t === "string" ? t : jsonText(t))}</span>`).join("")}<br><span class="waiting">等待响应</span>`
+    addRecord(node, `#${p.index} ${p.model ?? "?"}`, meta, "llm", { index: p.index, requestSummary: p }, "boundary")
+    if (codex) {
+      pulse("c-history"); bump("c-history")
+      addRecord("c-history", `捕获请求边界 #${p.index}`, "非 clone_history / build_prompt 函数直接 trace；WS 请求可能是增量。", "llm", { index: p.index, requestSummary: p }, "boundary")
+    }
+  } else {
+    pulse(node, 1200)
+    for (const id of codex ? [node, "c-history"] : [node]) {
+      const rec = store[id]?.find(r => r.kind === "llm" && r.data.index === p.index)
+      if (!rec) continue
+      rec.data.responseEvent = evt
+      rec.meta = rec.meta.replace(/<span class="waiting">等待响应<\/span>/, escapeHtml(p.error ? `捕获错误：${jsonText(p.error)}` : `${p.ms ?? "?"}ms · 文本 ${p.textChars ?? "?"} 字符 · usage=${jsonText(p.usage ?? {})}`))
+    }
+    if (p.error) addError(`LLM #${p.index} 捕获错误：${jsonText(p.error)}（不推定压缩分支或最终失败）`)
+    const calls = Array.isArray(p.toolCalls) ? p.toolCalls : null
+    addRecord(codex ? "c-decide2" : "decide2", `响应解析摘要：${calls ? "工具 " + calls.length + " 个" : "工具信息未提供"}`, "仅解析捕获响应，不能证明路由、执行、历史写回或跟进/退出分支。工具可能已在流中执行，不是收到此事件后才调度。", "json", p, "inferred")
+    if (activeTab === "records") renderRecords()
+  }
+}
+
+function processEvent(evt) {
+  const { type, properties: p = {} } = evt
+  if (type === "sync") return
+  if (type === "viz.abort.accepted") {
+    setRun("interrupted")
+    addRecord(harness === "codex" ? "c-done" : "done", "本地中断请求已接受", "直接本地 API 操作，不是进程 close 或任务正确性证明。", "json", p)
+    return
+  }
+  if (type === "viz.run") {
+    addUser(p.prompt ?? "")
+    addRecord(harness === "codex" ? "c-ui" : "ui", "提交提示词",
+      harness === "codex" ? "POST /api/run → spawn codex exec --json（实际启动配置见直接事件）" : "POST /api/run → 建会话 + 发消息（发后即忘）",
+      "json", p)
+    if (p.sessionID) { currentSession = p.sessionID; document.getElementById("sessionLabel").textContent = "会话 " + p.sessionID.slice(-8) }
+    return
+  }
+  if (type === "llm.request" || type === "llm.response") return captureLlmEvent(evt)
+  if (type.startsWith("codex."))
+    return handleCodexEvent(evt)
+  const child = isChild(p)
+
+  switch (type) {
+    case "viz.connected":
+      document.getElementById("connBadge").className = "badge on"
+      document.getElementById("connBadge").textContent = "已连接"
+      break
+    case "server.heartbeat": return
+
+    /* ── opencode 真实事件 ── */
+    case "session.created":
+      pulse("server")
+      addRecord("server", "会话创建 " + (p.info?.id ?? ""), `agent=${p.info?.agent ?? "-"} model=${p.info?.model?.id ?? "-"}`, "json", p)
+      log(type, "会话创建 " + (p.info?.id ?? ""), "ok"); break
+    case "session.updated":
+      pulse("server")
+      if (p.info?.model) addRecord("server", "会话配置确定", `agent=${p.info.agent ?? "-"} model=${p.info.model?.id ?? "-"}（${p.info.model?.providerID ?? "-"}）`, "json", p)
+      log(type, "会话更新" + (child ? "（子代理）" : "")); break
+    case "message.updated":
+      if (p.info?.role === "assistant") {
+        const info = p.info, node = child ? "sub" : "loop"
+        const previous = assistantSnapshots.get(info.id)
+        assistantSnapshots.set(info.id, info)
+        if (!seenAssistantMsgs.has(info.id)) {
+          seenAssistantMsgs.add(info.id); pulse(node, 4000); bump(node)
+          addRecord(node, `assistant 消息 ${info.id.slice(-6)}${info.summary ? "（summary 工作）" : ""}`,
+            "message.updated 是消息观测，不是内部 runLoop 迭代计数。summary assistant 表示摘要工作，不证明压缩已完成。", "json", info)
+        } else updateRec(node, r => r.data?.id === info.id, info)
+        if (!child && (!lastFinishInfo || lastFinishInfo.id === info.id || !previous)) lastFinishInfo = info
+        if (!child && terminalSessions.has(info.sessionID) && lastFinishInfo.id === info.id && (info.error || info.finish === "error"))
+          setRun(info.error?.name === "MessageAbortedError" || runState === "interrupted" ? "interrupted" : "failed")
+        if (info.finish && info.finish !== previous?.finish)
+          addRecord(child ? "sub" : "decide", `观测 finish=${info.finish}`, "不能只用 finish 推定 break：还需本地工具 parts 和 latest user 归属；错误也不总写 finish=error。", "json", info)
+      } else if (p.info?.role === "user") {
+        addRecord("server", "user 消息落库", "createUserMessage（prompt.ts:1057）", "json", p.info)
+      }
+      break
+    case "message.part.delta": {
+      if (p.field !== "text") break
+      const key = `${sessionID(p)}:${p.partID}`
+      const kind = partVocab[key]
+      if (!kind) {
+        const list = pendingDeltas.get(key) ?? []; list.push(p.delta ?? ""); pendingDeltas.set(key, list)
+      } else appendText(key, p.delta, kind, child)
+      pulse(child ? "sub" : "llm")
+      break
+    }
+    case "message.part.updated": {
+      const part = p.part
+      if (!part) break
+      const key = `${sessionID(p)}:${part.id}`
+      if (part.type === "tool") {
+        const node = child ? "sub" : "tool"
+        const callKey = `${sessionID(p)}:${part.callID ?? part.id}`
+        const previous = toolStates.get(callKey), st = part.state
+        if (!previous) {
+          bump(node); pulse(node)
+          addRecord(node, `工具 ${part.tool}`, "按 session + callID 去重；完整 part 状态保留。", "json", part)
+        } else updateRec(node, r => (r.data?.callID ?? r.data?.id) === (part.callID ?? part.id) && r.data?.sessionID === part.sessionID, part)
+        toolStates.set(callKey, part)
+        if (part.tool === "task" && previous) updateRec("sub", r => r.title === "普通 task 工具调用" && r.data?.sessionID === part.sessionID && (r.data?.callID ?? r.data?.id) === (part.callID ?? part.id), part)
+        if (part.tool === "task" && !previous) {
+          pulse("sub")
+          addRecord("sub", "普通 task 工具调用", "tool/task.ts execute 创建/复用子会话；不是 preflight SubtaskPart 分支。只有 parentID / task metadata 已知的后代归为子会话。", "json", part)
+        }
+        if ((st?.status === "completed" || st?.status === "error") && previous?.state?.status !== st.status) {
+          const endNode = child ? "sub" : "exec"
+          pulse(endNode); bump(endNode)
+          addRecord(endNode, `${part.tool} → ${st.status}`, "工具终态报告，不是整个任务正确性的证明。", "json", part)
+        }
+        toolCard(callKey, part.tool, st, child)
+      } else if (part.type === "compaction" || part.type === "subtask") {
+        if (!seenPartMarkers.has(key)) {
+          seenPartMarkers.add(key)
+          const node = child ? "sub" : part.type === "compaction" ? "subflow2" : "subflow1"
+          pulse(node); bump(node)
+          addRecord(node, part.type === "compaction" ? "compaction 请求标记" : "显式 SubtaskPart 标记", "标记不等于分支已执行或工作已完成；压缩 process 本身可能调用模型。", "json", part)
+        }
+      } else if (part.type === "text" || part.type === "reasoning") {
+        partVocab[key] = part.type
+        const buffered = pendingDeltas.get(key)?.join("") ?? ""
+        pendingDeltas.delete(key)
+        const snapshot = part.text ?? ""
+        const text = buffered && !snapshot.endsWith(buffered) ? snapshot + buffered : snapshot
+        appendText(key, text, part.type, child)
+        if (bubbles[key]) bubbles[key].textContent = text
+      } else if (part.type === "step-start") {
+        pulse(child ? "sub" : "loop", 2000)
+      }
+      break
+    }
+    case "session.status":
+      if (p.status?.type === "busy") { if (!child) setRun("busy"); terminalSessions.delete(p.sessionID); pulse(child ? "sub" : "loop", 3000) }
+      if (p.status?.type === "idle") endSession(p, child)
+      if (p.status?.type === "retry") {
+        pulse("llm")
+        addRecord("llm", "模型调用失败 → 退避重试", "provider 调用失败后的 retry（不进内务检查分支）", "json", { 输入_attempt: p.status.attempt, message: p.status.message })
+        log(type, "重试中… " + (p.status.message ?? ""), "warn")
+      }
+      log(type, "status=" + (p.status?.type ?? "?"))
+      break
+    case "session.idle":
+      endSession(p, child); break
+    case "session.compacted":
+      pulse(child ? "sub" : "subflow2"); bump(child ? "sub" : "subflow2")
+      addRecord(child ? "sub" : "subflow2", "session.compacted 报告压缩完成", "报告完成，不反推主动/溢出/手动分支。", "json", p)
+      log(type, "会话压缩完成", "warn"); break
+    case "session.error":
+      sessionErrors.set(p.sessionID, p.error ?? p)
+      if (!child && p.error?.name === "SubmissionError") setRun("failed")
+      if (!child && p.error?.name === "MessageAbortedError" && terminalSessions.has(p.sessionID)) setRun("interrupted")
+      addError(p.error?.data?.message ?? p.error?.message ?? JSON.stringify(p.error ?? p))
+      addRecord(child ? "sub" : "done", "会话错误证据（可能可恢复）", "不由 context 字符串推定主动 overflow 分支，也不立即判定 run 失败。", "json", p)
+      log(type, "错误", "warn"); break
+    case "permission.asked":
+      pulse("perm", 60000); bump("perm")
+      addRecord("perm", `询问: ${p.permission}`, `匹配 ${escapeHtml((p.patterns || []).join(", "))} · 工具已挂起等待答复（Deferred）`, "json", p)
+      showPerm(p); log(type, `权限询问 ${p.permission}`, "perm"); break
+    case "permission.replied":
+      pulse("perm")
+      if (pendingPerm && pendingPerm.id === p.requestID) { permModal.classList.remove("show"); pendingPerm = null }
+      log(type, `权限答复 ${p.reply}`, "perm"); break
+    case "file.edited":
+      pulse("exec")
+      addRecord("exec", "文件被修改", "", "json", p)
+      log(type, "file.edited", "ok"); break
+    case "session.diff": break
+    case "server.connected": break
+    default:
+      if (!/^(plugin\.|catalog\.|reference\.|integration\.|mcp\.|lsp\.|vcs\.)/.test(type))
+        log(type, JSON.stringify(p).slice(0, 90))
+  }
+}
+
+/* codex exec items / 生命周期事件；采样捕获单独归档为 API 边界。 */
+function codexItem(item, done) {
+  if (!item) return
+  const key = item.id ?? item.call_id ?? currentEvent?.id
+  if (key == null) { addRecord("c-tool", "无标识 item（不合并）", "无法按调用身份去重。", "json", item); return }
+  const previous = codexItems.get(key)
+  if (previous?.done && !done) return
+  if (previous?.done === done && jsonText(previous.item) === jsonText(item)) return
+  codexItems.set(key, { item, done })
+  const textItem = item.type === "agent_message" || item.type === "reasoning"
+  const errorItem = item.type === "error"
+  const toolItem = ["command_execution", "file_change", "mcp_tool_call", "collab_tool_call", "web_search"].includes(item.type)
+  const node = textItem ? "c-llm" : errorItem ? "c-done" : toolItem ? "c-tool" : "c-server"
+  if (!previous) {
+    if (toolItem) bump(node)
+    addRecord(node, `item ${item.type}`, "直接 exec item 报告；完整原始 item 保留，completed 不保证任务正确。", "json", item)
+  } else updateRec(node, r => (r.data?.id ?? r.data?.call_id) === key, item)
+  let b = toolCards["cx-" + key]
+  if (!b) b = toolCards["cx-" + key] = addMsg(textItem ? item.type === "reasoning" ? "reasoning" : "assistant" : errorItem ? "error" : "tool",
+    textItem ? item.type === "reasoning" ? "reasoning 摘要（非完整内部推理）" : "agent_message（不一定是最终回答）" : `exec item · ${escapeHtml(item.type)}`)
+  if (textItem) b.textContent = item.text ?? ""
+  else if (errorItem) b.innerHTML = `<pre>${escapeHtml(item.message ?? "错误 item")}</pre>` + rawDetail("错误 item（完整；不单独推定 turn 终态）", item)
+  else {
+    const name = item.type === "command_execution" ? "shell" : item.type === "mcp_tool_call" ? `${item.server}/${item.tool}` : item.type === "collab_tool_call" ? `collaboration · ${item.tool ?? "?"}` : item.type
+    const status = item.status ?? (done ? "completed" : "in_progress")
+    b.innerHTML = `<span class="toolname">${escapeHtml(name)}</span><span class="status ${status === "completed" ? "completed" : status === "in_progress" ? "running" : "error"}">${escapeHtml(status)}</span>` + rawDetail("原始 item（完整，含 MCP result / collaboration 元数据）", item)
+  }
+  pulse(node); scrollBottom()
+}
+
+function handleCodexEvent(evt) {
+  const { type, properties: p = {} } = evt
+  switch (type) {
+    case "codex.trace": {
+      const raw = p.event?.payload ?? {}
+      const node = raw.type?.startsWith("compaction_") ? "c-compact"
+        : raw.type?.startsWith("tool_call_") ? "c-tool" : null
+      if (node) {
+        pulse(node)
+        addRecord(node, `原生 trace: ${raw.type}`, "直接 rollout trace 事件；不推断压缩发生在 turn 前、中或后，也不把运行时输出当作模型已收到的原文。", "json", p)
+      }
+      break
+    }
+    case "codex.trace.warning":
+      addError(p.message ?? "原生 trace 捕获不完整")
+      addRecord("c-llm", "Trace 捕获警告", "捕获缺失不等于模型没有调用。", "json", p)
+      break
+    case "codex.proc.start":
+      setRun("busy")
+      addInfo("启动 codex exec 进程；实际启动属性见原始事件。exec 默认审批 Never（exec/lib.rs:571），存在配置例外（:758）。")
+      pulse("c-server")
+      addRecord("c-server", "exec 进程启动", "启动边界报告，不是 run_turn 函数 trace。", "json", p)
+      log(type, p.cmd ?? "spawn"); break
+    case "codex.thread.started":
+      currentSession = rootByHarness.codex = p.thread_id
+      document.getElementById("sessionLabel").textContent = "线程 " + String(p.thread_id).slice(-8)
+      pulse("c-server"); bump("c-server")
+      addRecord("c-server", "线程启动 " + p.thread_id,
+        "直接 thread.started 事件；源码路径 exec run_main → RegularTask → run_turn，非函数调用观测。", "json", p)
+      log(type, "thread " + p.thread_id, "ok"); break
+    case "codex.turn.started":
+      setRun("busy"); pulse("c-loop", 4000); bump("c-loop")
+      addRecord("c-loop", "turn.started（turn 开始计数）",
+        "不证明预采样压缩已执行，不计内部 loop 迭代或采样次数。", "json", p)
+      log(type, "turn 开始", "ok"); break
+    case "codex.item.started": codexItem(p.item, false); break
+    case "codex.item.updated": codexItem(p.item, false); break
+    case "codex.item.completed": codexItem(p.item, true); break
+    case "codex.turn.completed":
+      if (!["failed", "interrupted"].includes(runState)) setRun("ended")
+      pulse("c-done", 4000); bump("c-done")
+      addRecord("c-done", "turn.completed（完成报告）",
+        "直接 turn 完成报告，不反推 needs_follow_up、stop hook 或压缩分支，也不证明任务正确。", "json", p)
+      addInfo("turn.completed（非任务成功判定）· usage=" + JSON.stringify(p.usage ?? {}))
+      log(type, "turn 完成", "ok"); break
+    case "codex.turn.failed":
+      setRun(p.aborted || p.error?.name === "MessageAbortedError" || runState === "interrupted" ? "interrupted" : "failed")
+      addError("turn 失败: " + (p.error?.message ?? JSON.stringify(p)))
+      addRecord("c-done", "turn 失败", "", "json", p)
+      log(type, "turn 失败", "warn"); break
+    case "codex.error":
+      addError(p.message ?? JSON.stringify(p))
+      log(type, p.message ?? "error", "warn"); break
+    case "codex.proc.exit":
+      if (p.aborted) setRun("interrupted")
+      else if (!["failed", "interrupted"].includes(runState)) setRun(p.code != null && p.code !== 0 ? "failed" : p.signal ? "interrupted" : "ended")
+      addRecord("c-done", `exec 进程退出 code=${p.code}`, `进程结束不覆盖已有 turn 失败/中断证据 · aborted=${p.aborted ?? "未提供"}`, "json", p)
+      if (p.code !== 0 && p.code != null) addError("codex exec 退出码 " + p.code + (p.stderrTail ? "\n" + p.stderrTail : ""))
+      log(type, `进程退出 code=${p.code}`, p.code === 0 ? "ok" : "warn"); break
+    default:
+      log(type, JSON.stringify(p).slice(0, 90))
+  }
+}
+
+/* 静态机制说明链接到审计锁定 commit，不把机制当成运行观测。 */
+const SOURCE_PINS = {
+  codex: { tag: "rust-v0.160.0", commit: "a956835d020762cb2b570053af06f643a11c0ecc", repo: "openai/codex", root: "codex-rs/" },
+  opencode: { tag: "v1.18.34", commit: "aec0b9a6d8898f68f923aaf08b7306d931fd9d76", repo: "anomalyco/opencode", root: "packages/opencode/src/" },
+}
+function sourceDoc(h, explanation, anchors) {
+  const pin = SOURCE_PINS[h]
+  return `<h3>源码机制（非运行 trace）</h3><p>${explanation}</p><h3>审计源码锚点</h3><p><code>${pin.tag} · ${pin.commit}</code></p>` + anchors.map(([file, symbol, lines]) => {
+    const range = String(lines).split("-")
+    const url = `https://github.com/${pin.repo}/blob/${pin.commit}/${pin.root}${file}#L${range[0]}${range[1] ? "-L" + range[1] : ""}`
+    return `<p><a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(file)}:${lines} · ${escapeHtml(symbol)}</a></p>`
+  }).join("") + `<p class="evidence">直接事件 / API 边界捕获 / 解析推断。无记录仅表示未直接观测。</p>`
+}
+const ocDoc = (text, anchors) => sourceDoc("opencode", text, anchors)
+const cxDoc = (text, anchors) => sourceDoc("codex", text, anchors)
+const turnAnchor = (symbol, lines) => ["core/src/session/turn.rs", symbol, lines]
+const DOCS = {
+opencode: {
+  ui: ocDoc("本地 UI 提交 /api/run；viz.run 仅证明提交。上游 prompt 写入 user 消息后进入 V1 loop；具体模型/会话由 API 与事件确认。", [["session/prompt.ts", "prompt / createUserMessage", "1052-1081"]]),
+  server: ocDoc("prompt 写 user 消息并进入 runLoop。session.created/updated 的 parentID 维护归属；不同 sessionID 不能自动当作子代理。", [["session/prompt.ts", "prompt / runLoop", "1052-1081"], ["tool/task.ts", "TaskTool execute / child session", "119-224"]]),
+  loop: ocDoc("V1 runLoop 重载历史并先检查退出，再处理显式子任务、压缩和溢出。新 assistant 是消息观测，不能精确计数循环；HTTP 重试也不等于新增迭代。", [["session/prompt.ts", "runLoop", "1081-1168"], ["session/llm.ts", "stream / streamText", "280"]]),
+  decide: ocDoc("退出需要终止性 finish、属于 latest user，且不存在符合条件的本地 tool part。检查的不只是 pending：completed 本地工具也可符合；排除 providerExecuted 与 interrupted error。只看 finish 不能证明 break。", [["session/prompt.ts", "runLoop exit predicate", "1100-1129"], ["session/processor.ts", "process / step-finish", "457-470"]]),
+  subflow1: ocDoc("preflight tasks.pop 处理显式 SubtaskPart 并调用 handleSubtask。不是普通 task 工具留下的必经阶段；marker 不证明 handleSubtask 已执行。", [["session/prompt.ts", "runLoop / tasks.pop", "1142-1147"], ["session/prompt.ts", "handleSubtask", "255"]]),
+  subflow2: ocDoc("compaction part 是请求标记；compaction.process 会做模型摘要工作，不是本轮不调模型。summary assistant 表示摘要工作，session.compacted 报告完成。此路由是 V1。", [["session/prompt.ts", "runLoop / compaction.process", "1149-1159"], ["session/compaction.ts", "process", "319-448"]]),
+  subflow3: ocDoc("主动溢出检查使用历史 token 与模型限制；reactive overflow 是另一条路径。错误字符串含 context 不能证明主动检查命中，错误可能恢复。", [["session/prompt.ts", "runLoop proactive overflow", "1161-1168"], ["session/prompt.ts", "runLoop reactive overflow", "1320"], ["session/overflow.ts", "isOverflow", "10"]]),
+  llm: ocDoc("装配 system/messages/tools 后进入 llm streamText；默认没有 stopWhen，但存在重试，因此 HTTP 请求数不等于 runLoop 迭代。捕获 API 边界内容不代表服务端最终提示词或完整推理。", [["session/prompt.ts", "runLoop / prompt assembly", "1226-1286"], ["session/llm.ts", "stream / streamText", "280"]]),
+  decide2: ocDoc("响应中的工具块是解析证据，不证明 execute 被调用。工具通过 streamText 执行桥接在流期间处理，而非 llm.response 后才开始。无工具摘要也不能证明循环退出。", [["session/tools.ts", "resolve / execute bridge", "59-132"], ["session/processor.ts", "process / tool events", "216-315"]]),
+  tool: ocDoc("工具装配与执行桥接负责解码参数、权限和调用；processor 更新 tool part。按 session + callID 去重并保留完整状态，不按每次 part 更新增加工具次数。", [["session/tools.ts", "resolve / execute bridge", "59-132"], ["session/processor.ts", "process / ensureToolCall", "216-315"]]),
+  perm: ocDoc("ask 按规则 allow / deny / ask 求值；询问事件挂起等待 reply。只有直接 permission.asked 才显示询问，不由工具名称推断审批分支。", [["permission/index.ts", "ask / reply", "67-166"]]),
+  exec: ocDoc("completeToolCall 保留 output、metadata、attachments 等完整结果。工具 completed 只报告工具终态；响应摘要不能证明精确历史写回，工具成功不等于任务正确。", [["session/processor.ts", "completeToolCall", "160"], ["session/processor.ts", "process / step-finish", "457-470"]]),
+  sub: ocDoc("普通 task execute 创建或复用子 session 并驱动子 prompt，与显式 handleSubtask 不同。仅由 parentID 或 task metadata sessionId/parentSessionId 确认 root 的后代；未知会话保留原始事件，归属明确后再转写。", [["tool/task.ts", "TaskTool execute / child session", "119-224"], ["tool/task.ts", "TaskTool execute / child prompt and result", "284-358"], ["session/prompt.ts", "handleSubtask", "255"]]),
+  done: ocDoc("runLoop 有多条收尾路径；prune 是 forked 工作。session.status idle 是 canonical 终态，session.idle 冗余；idle 只表示 ended，不表示成功。保留 error/abort，错误并不总写 finish=error。", [["session/prompt.ts", "runLoop termination / forked prune", "1288-1339"], ["session/status.ts", "set / idle publication", "39-47"], ["session/processor.ts", "process / step-finish", "457-470"]]),
+},
+codex: {
+  "c-ui": cxDoc("本地 UI 提交 /api/run，启动 codex exec；模型、捕获方式与启动参数以 status / 直接事件为准，不假定走翻译代理。", [["exec/src/lib.rs", "run_main / approval setup", "571"], turnAnchor("run_turn / pre-sampling setup", "179-221")]),
+  "c-server": cxDoc("exec 驱动 run_turn；thread.started / proc.start 是生命周期事件，不能当作函数 trace。模型捕获可能来自 native-trace 或 translation-proxy。", [["exec/src/lib.rs", "run_main / approval setup", "571"], turnAnchor("run_turn", "163"), ["core/src/tasks/mod.rs", "task completion", "812"]]),
+  "c-precompact": cxDoc("run_turn 采样前有压缩检查，run_pre_sampling_compact 实现条件性压缩。turn.started 不证明检查已执行或分支命中；没有记录不证明跳过。", [turnAnchor("run_turn / pre-sampling compaction call", "179-221"), turnAnchor("run_pre_sampling_compact", "1298")]),
+  "c-loop": cxDoc("静态 loop 位于 run_turn；此节点 badge 仅计 turn.started，不是内部迭代。队列输入与上下文处理仍是源码机制，不能由开始事件宣称已完成。", [turnAnchor("run_turn / loop", "426")]),
+  "c-history": cxDoc("源码 clone_history 后 build_prompt；此节点仅归档请求边界，不是这两个函数的直接观测。WS previous_response_id 续接可只发送增量 input；报文项数不能推定全量逻辑历史。", [turnAnchor("run_turn / clone_history", "515"), turnAnchor("build_prompt", "1583")]),
+  "c-llm": cxDoc("try_run_sampling_request 处理模型流，外层有 retries；传输可为 HTTP 或 WebSocket。一次边界请求不等于一次 loop。instructions 不等同 system；native thinking 可能只是摘要。原始请求、响应、tools 与 trace 完整展示。", [turnAnchor("try_run_sampling_request", "2519"), turnAnchor("run_sampling_request / retries", "1647")]),
+  "c-decide2": cxDoc("handle_output_item_done 经 ToolRouter 识别/路由工具，在采样流中开始处理。toolCalls 只是解析推断，不能证明路由或执行；无工具摘要不证明机制被跳过。", [["core/src/stream_events_utils.rs", "handle_output_item_done / ToolRouter", "315"], turnAnchor("try_run_sampling_request", "2519")]),
+   "c-tool": cxDoc("工具在模型流期间处理，不等待 UI llm.response；drain_in_flight 收割结果。exec 工具 items 直接报告状态，badge 按 item 身份去重计数，不计计划/错误 items，也不计内部执行次数。完整 raw item 保留 MCP result 与 collaboration 元数据。", [["core/src/stream_events_utils.rs", "handle_output_item_done", "315"], turnAnchor("drain_in_flight", "2466"), ["exec/src/exec_events.rs", "ThreadItemDetails / CollabToolCallItem / McpToolCallItem", "107-292"]]),
+  "c-decide": cxDoc("needs_follow_up 综合模型跟进和待处理输入，end_turn 参与模型流语义。工具解析摘要不能证明该判定；无跟进仍进入 stop hooks，hook 可能继续。turn.completed 不反推任何一次分支。", [turnAnchor("run_turn / needs_follow_up", "566"), turnAnchor("try_run_sampling_request / end_turn", "2973"), turnAnchor("run_turn / stop hooks", "653")]),
+  "c-compact": cxDoc("循环中的条件性压缩与 turn 前、turn 后压缩不同。额外采样或 input 变短不是此分支执行的充分证据，未直接观测时保持空记录。", [turnAnchor("run_turn / mid-turn compaction", "601")]),
+  "c-stop": cxDoc("无跟进不是保证 break：stop hooks 可能添加工作并继续 loop，也可 should_stop 提前 break；legacy after-agent hook 还有提前返回路径。正常收尾才检查 turn 后压缩。不从 turn.completed 伪造 hook 记录。", [turnAnchor("run_turn / stop hooks", "653-713")]),
+  "c-postcompact": cxDoc("turn 后还有条件性压缩机制，不把停止跟进简化成直接进程退出。只有直接对应观测才归档，完成事件不证明此机制执行。", [turnAnchor("run_turn / post-turn compaction", "713")]),
+  "c-sandbox": cxDoc("exec 默认 AskForApproval::Never，但有例外配置；沙箱/审批以实际配置和启动证据为准，不能说所有 exec 都固定 Never。未出现询问不证明授权或执行成功。", [["exec/src/lib.rs", "run_main / default approval", "571"], ["exec/src/lib.rs", "run_main / approval exceptions", "758"]]),
+  "c-done": cxDoc("run_turn 收尾/错误返回、task 完成、进程 close 是不同边界。区分 ended、failed、interrupted；code=0 不覆盖 turn 失败。agent_message completed 不一定是最终回答，completed 不保证任务正确。", [turnAnchor("run_turn / TurnAborted handling", "793"), ["core/src/tasks/mod.rs", "task completion", "812"]]),
+},
+}
+
+/* ═══════════ 连接 & 控制 ═══════════ */
+let liveReady = false
+function connect() {
+  const es = new EventSource("/api/stream")
+  es.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data)
+      const h = evt.harness ?? "opencode"
+      if (evt.type !== "viz.connected") eventsByHarness[h]?.push(evt)
+      if (evt.type === "viz.connected" || (liveReady && h === harness)) handleEvent(evt)
+    } catch (err) { console.error(err) }
+  }
+  es.onerror = () => {
+    document.getElementById("connBadge").className = "badge"
+    document.getElementById("connBadge").textContent = "连接断开，重连中…"
+  }
+}
+
+/* 清空界面状态（运行新任务 / 切换 harness 共用） */
+function resetUI() {
+  transcript.innerHTML = ""
+  eventlog.innerHTML = ""; logN = 0; logCount.textContent = "(0)"
+  Object.keys(bubbles).forEach(k => delete bubbles[k])
+  Object.keys(toolCards).forEach(k => delete toolCards[k])
+  Object.keys(partVocab).forEach(k => delete partVocab[k])
+  Object.keys(store).forEach(k => delete store[k])
+  seenAssistantMsgs.clear()
+  for (const collection of [sessionParents, pendingDeltas, toolStates, codexItems, terminalSessions, sessionErrors, assistantSnapshots, seenPartMarkers, seenLlmRequests, seenEventIDs, openRecords]) collection.clear()
+  pendingSessionEvents.length = 0
+  loggedEvents = new WeakSet(); currentEvent = null; currentRunID = null; llmRevision++
+  pendingPerm = null; permModal.classList.remove("show")
+  Object.values(activeTimers).forEach(clearTimeout)
+  lastFinishInfo = null
+  Object.keys(sysTextCache).forEach(k => delete sysTextCache[k])
+  llmCallCount = 0; llmBadge.textContent = "捕获请求: 0"
+  document.querySelectorAll(".cnt").forEach(c => { c.style.display = "none"; c.textContent = "0" })
+  document.querySelectorAll(".fnode,.fdia").forEach(e => { e.classList.remove("unread", "active") })
+  currentSession = null
+  document.getElementById("sessionLabel").textContent = ""
+  setRun("idle")
+}
+
+/* 切换 harness：换流程图 + 重放该 harness 的事件流重建现场 */
+function switchHarness(h) {
+  if (h === harness) return
+  harness = h
+  document.querySelectorAll(".hbtn").forEach(b => b.classList.toggle("on", b.dataset.h === h))
+  document.getElementById("flowOpencode").style.display = h === "opencode" ? "" : "none"
+  document.getElementById("flowCodex").style.display = h === "codex" ? "" : "none"
+  document.getElementById("appTitle").textContent = (h === "codex" ? "codex" : "opencode") + " Harness 实时可视化"
+  document.getElementById("modelSel").style.display = h === "codex" ? "none" : ""
+  document.getElementById("codexModelBadge").style.display = h === "codex" ? "" : "none"
+  document.getElementById("prompt").placeholder = h === "codex"
+    ? "输入提示词，驱动真实 codex exec…（Ctrl+Enter 运行）"
+    : "输入提示词，驱动真实 opencode harness…（Ctrl+Enter 运行）"
+  resetUI()
+  currentSession = rootByHarness[h]
+  if (currentSession) document.getElementById("sessionLabel").textContent = "会话 " + currentSession.slice(-8)
+  for (const evt of eventsByHarness[h]) handleEvent(evt)
+  selectNode(h === "codex" ? "c-llm" : "llm")
+}
+document.querySelectorAll(".hbtn").forEach(b => b.onclick = () => switchHarness(b.dataset.h))
+
+async function run() {
+  const prompt = document.getElementById("prompt").value.trim()
+  if (!prompt || runState === "busy") return
+  const target = harness
+  resetUI()
+  setRun("busy")
+  eventsByHarness[target] = []; rootByHarness[target] = null
+  renderPanel()
+  try {
+    const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, harness: target, model: document.getElementById("modelSel").value || undefined }) })
+    const data = await res.json()
+    if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`)
+    if (data.sessionID) rootByHarness[target] = data.sessionID
+    if (harness !== target) return
+    if (data.sessionID) {
+      currentSession = data.sessionID
+      document.getElementById("sessionLabel").textContent = "会话 " + data.sessionID.slice(-8)
+      flushSessionEvents()
+    }
+  } catch (err) { if (harness === target) { addError(String(err)); setRun("failed") } }
+}
+
+document.getElementById("runBtn").onclick = run
+document.getElementById("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run() })
+document.getElementById("demoBtn").onclick = () => {
+  document.getElementById("prompt").value = harness === "codex"
+    ? "请列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome，最后告诉我改了什么。"
+    : "请先用 glob 列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome。"
+}
+document.getElementById("abortBtn").onclick = async () => {
+  const target = harness
+  try {
+    const res = await fetch("/api/abort", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionID: currentSession, harness: target }) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (harness !== target) return
+    addInfo("中断请求已被 API 接受；实际进程/会话终态以事件为准。")
+    const evt = { type: "viz.abort.accepted", harness: target, source: "viz", receivedAt: new Date().toISOString(), properties: { sessionID: currentSession, api: "/api/abort" } }
+    eventsByHarness[target].push(evt); handleEvent(evt)
+  } catch (err) { if (harness === target) addError("中断请求失败：" + String(err)) }
+}
+
+/* ═══════════ 流程图缩放 & 平移 ═══════════ */
+const flowWrap = document.getElementById("flowWrap")
+const flowCanvas = document.getElementById("flowCanvas")
+let view = { k: 1, x: 0, y: 0 }
+const applyView = () => { flowCanvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})` }
+flowWrap.addEventListener("wheel", (e) => {
+  if (window.matchMedia("(max-width: 1200px)").matches) return
+  e.preventDefault()
+  const r = flowWrap.getBoundingClientRect()
+  const cx = e.clientX - r.left, cy = e.clientY - r.top
+  const k2 = Math.min(Math.max(view.k * (e.deltaY < 0 ? 1.12 : 0.89), 0.35), 2.5)
+  view.x = cx - (cx - view.x) * (k2 / view.k)   // 以光标为中心缩放
+  view.y = cy - (cy - view.y) * (k2 / view.k)
+  view.k = k2
+  applyView()
+}, { passive: false })
+flowWrap.addEventListener("mousedown", (e) => {
+  if (window.matchMedia("(max-width: 1200px)").matches) return
+  if (e.target.closest(".fnode,.fdia")) return   // 节点上按下不拖动，保留点击
+  e.preventDefault()
+  flowWrap.classList.add("panning")
+  const sx = e.clientX - view.x, sy = e.clientY - view.y
+  const mv = (ev) => { view.x = ev.clientX - sx; view.y = ev.clientY - sy; applyView() }
+  const up = () => { flowWrap.classList.remove("panning"); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up) }
+  window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up)
+})
+document.getElementById("flowReset").onclick = () => { view = { k: 1, x: 0, y: 0 }; applyView() }
+
+/* ═══════════ 三栏拖拽调宽 ═══════════ */
+function makeResizable(handleId, cssVar, invert) {
+  const handle = document.getElementById(handleId)
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault()
+    handle.classList.add("dragging"); document.body.classList.add("resizing")
+    const startX = e.clientX
+    const startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue(cssVar)) || 0
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX
+      const w = Math.min(Math.max(startW + (invert ? -dx : dx), 300), Math.floor(window.innerWidth * 0.55))
+      document.documentElement.style.setProperty(cssVar, w + "px")
+    }
+    const onUp = () => {
+      handle.classList.remove("dragging"); document.body.classList.remove("resizing")
+      window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp)
+    }
+    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp)
+  })
+}
+makeResizable("rz1", "--w-left", false)
+makeResizable("rz2", "--w-right", true)
+
+async function init() {
+  connect() // Buffer live events before loading snapshots, avoiding a replay/subscription gap.
+  const status = await (await fetch("/api/status")).json()
+  const captureSource = status.codexCaptureSource ?? "来源未标注"
+  document.getElementById("codexModelBadge").textContent = "模型: " + (status.codexModel ?? "?") + (status.codexCapture ? `（捕获: ${captureSource}）` : "（未启用捕获）")
+  document.getElementById("codexModelBadge").title = jsonText({ codexModel: status.codexModel, codexCapture: status.codexCapture, codexCaptureSource: status.codexCaptureSource })
+  if (status.versions) document.getElementById("verBadge").textContent = `opencode ${status.versions.opencode ?? "?"} · codex ${status.versions.codex ?? "?"}`
+  document.getElementById("verBadge").title = jsonText({ versions: status.versions, sourceLock: status.sourceLock })
+  document.getElementById("evidenceBanner").innerHTML += rawDetail("运行 sourceLock / 审计固定版本（机制不等于运行证据）", { sourceLock: status.sourceLock ?? "服务未提供", auditedPins: SOURCE_PINS })
+  const { models } = await (await fetch("/api/models")).json()
+  const sel = document.getElementById("modelSel")
+  for (const m of models) {
+    const o = document.createElement("option"); o.value = m.value; o.textContent = m.label
+    if (m.value === status.ocModel) o.selected = true
+    sel.appendChild(o)
+  }
+  /* 刷新恢复：回放服务端内存里的上次运行事件（重启 server 后即为空） */
+  try {
+    const last = await (await fetch("/api/last-run?harness=opencode")).json()
+    if (last.events?.length) {
+      eventsByHarness.opencode = [...last.events, ...eventsByHarness.opencode]
+      currentSession = last.sessionID
+      rootByHarness.opencode = last.sessionID
+      if (currentSession) document.getElementById("sessionLabel").textContent = "会话 " + currentSession.slice(-8)
+      addInfo(`已恢复上次运行的现场（回放 ${last.events.length} 个事件；server 重启后不再保留）`)
+    }
+    const lastC = await (await fetch("/api/last-run?harness=codex")).json()
+    rootByHarness.codex = lastC.sessionID ?? null
+    if (lastC.events?.length) eventsByHarness.codex = [...lastC.events, ...eventsByHarness.codex]
+  } catch {}
+  for (const evt of eventsByHarness.opencode) handleEvent(evt)
+  liveReady = true
+  switchHarness("codex")
+}
+init().catch(err => { liveReady = true; addError("初始化失败：" + String(err)) })
+</script>
+</body>
+</html>
