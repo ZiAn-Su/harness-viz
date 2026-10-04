@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util"
 
 // Synthetic frontend units, not browser/layout verification or live integration.
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8")
-const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)]
+const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].filter(match => match[1].trim())
 assert.equal(scripts.length, 1, "expected one inline frontend script")
 const source = scripts[0][1]
 const startup = /^init\(\)\.catch[^\r\n]*$/gm
@@ -22,6 +22,7 @@ class Element {
     this.className = className
     this.style = {}
     this.dataset = {}
+    this.attributes = new Map()
     this.children = []
     this.slots = new Map()
     this.parentNode = null
@@ -68,6 +69,9 @@ class Element {
   }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child }
   addEventListener() {}
+  setAttribute(name, value) { this.attributes.set(name, String(value)) }
+  getAttribute(name) { return this.attributes.get(name) ?? null }
+  focus() {}
 }
 
 function createFrontend(harness = "opencode") {
@@ -79,8 +83,11 @@ function createFrontend(harness = "opencode") {
   }
   let calls = [], eventID = 0, timerID = 0
   const fetches = [], timers = new Map()
+  const preferences = new Map()
   const context = vm.createContext({
     console,
+    renderMarkdown: value => `<p>${escapeText(value)}</p>`,
+    localStorage: { getItem: key => preferences.get(key) ?? null, setItem: (key, value) => preferences.set(key, value) },
     setTimeout(callback) { timers.set(++timerID, callback); return timerID },
     clearTimeout(id) { timers.delete(id) },
     document: {
@@ -142,6 +149,34 @@ test("frontend syntax compiles without execution", () => {
   assert.doesNotThrow(() => new vm.Script(source, { filename: "index.html" }))
 })
 
+test("synthetic: panel toggles preserve run history and can hide every workspace panel", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root", prompt: "task" })
+  ui.event("message.updated", { info: { id: "assistant", role: "assistant", sessionID: "root" } })
+  const before = ui.read("store.loop")
+  for (const name of ["input", "flow", "transcript", "details"]) ui.evaluate(`setView(${JSON.stringify(name)}, false)`)
+  for (const id of ["composer", "colFlow", "colTx", "colLlm", "rz1", "rz2"]) assert.equal(ui.elements.get(id).hidden, true)
+  assert.equal(ui.elements.get("workspaceEmpty").hidden, false)
+  assert.equal(ui.read("runState"), "busy")
+  assert.deepEqual(ui.read("store.loop"), before)
+  ui.evaluate('setView("transcript", true)')
+  assert.equal(ui.elements.get("colTx").hidden, false)
+  assert.equal(ui.elements.get("toggle-transcript").getAttribute("aria-pressed"), "true")
+  ui.evaluate("restoreLayout()")
+  assert.deepEqual(ui.read("layout"), { input: false, flow: false, transcript: true, details: false })
+})
+
+test("synthetic: concise terminal state and header stop control remain usable with hidden input", () => {
+  const ui = createFrontend()
+  ui.evaluate("restoreLayout(); setRun('busy')")
+  assert.equal(ui.elements.get("composer").hidden, true)
+  assert.equal(ui.elements.get("abortBtn").hidden, false)
+  assert.equal(ui.elements.get("abortBtn").disabled, false)
+  ui.evaluate("setRun('ended')")
+  assert.equal(ui.elements.get("runBadge").textContent, "已结束")
+  assert.equal(ui.elements.get("abortBtn").hidden, true)
+})
+
 test("synthetic: text and reasoning both use field=text and snapshot part types", () => {
   const ui = createFrontend()
   ui.event("viz.run", { prompt: "fixture", sessionID: "root" })
@@ -149,14 +184,14 @@ test("synthetic: text and reasoning both use field=text and snapshot part types"
     ui.event("message.part.updated", { part: { id: type, sessionID: "root", type, text: "" } })
     ui.event("message.part.delta", { sessionID: "root", partID: type, field: "text", delta: `${type}-delta` })
     assert.equal(ui.read(`partVocab["root:${type}"]`), type)
-    assert.equal(ui.read(`bubbles["root:${type}"].textContent`), `${type}-delta`)
+    assert.equal(ui.read(`bubbles["root:${type}"].dataset.rawText`), `${type}-delta`)
     ui.event("message.part.updated", { part: { id: type, sessionID: "root", type, text: `${type}-delta` } })
-    assert.equal(ui.read(`bubbles["root:${type}"].textContent`), `${type}-delta`, "full snapshots must not duplicate deltas")
+    assert.equal(ui.read(`bubbles["root:${type}"].dataset.rawText`), `${type}-delta`, "full snapshots must not duplicate deltas")
   }
   ui.event("message.part.delta", { sessionID: "root", partID: "unresolved", field: "text", delta: "buffered" })
   assert.equal(ui.read('bubbles["root:unresolved"]'), undefined)
   ui.event("message.part.updated", { part: { id: "unresolved", sessionID: "root", type: "reasoning", text: "" } })
-  assert.equal(ui.read('bubbles["root:unresolved"].textContent'), "buffered")
+  assert.equal(ui.read('bubbles["root:unresolved"].dataset.rawText'), "buffered")
   assert.equal(ui.read("pendingDeltas.size"), 0)
 })
 
@@ -376,6 +411,21 @@ test("synthetic: translated request is its own complete JSON, not a content-equi
   assert.ok(sections.some(section => isDeepStrictEqual(section, call.translationWarnings)))
   assert.match(rendered, /translation-proxy/)
   assert.match(rendered, /\u4e0d\u4fdd\u8bc1\u5185\u5bb9\u7b49\u4ef7/u)
+})
+
+test("synthetic: readable model input opens developer instructions and preserves the full export object", () => {
+  const ui = createFrontend("codex")
+  const modelInput = { kind: "reconstructed", complete: true, format: "responses", system: "", chain: [1, 2], items: [
+    { type: "additional_tools", role: "developer", tools: [] },
+    { type: "message", role: "developer", content: [{ text: longText }] },
+    { type: "function_call_output", call_id: "tool-1", output: "FEEDBACK" },
+  ] }
+  const rendered = ui.evaluate("renderLlmCall(fixture)", { index: 2, harness: "codex", request: { input: [] }, modelInput })
+  assert.match(rendered, /模型输入/)
+  assert.match(rendered, /按响应链重建/)
+  assert.match(rendered, /class="input-message" open><summary>2\. developer/)
+  assert.ok(rendered.includes(longText), "readable input must not truncate instructions")
+  assert.deepEqual(ui.read("modelInputCache[2]"), modelInput)
 })
 
 test("synthetic: OpenCode raw requests retain non-text blocks and complete tool schemas", () => {

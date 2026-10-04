@@ -8,27 +8,21 @@
  */
 import { spawn, spawnSync } from "node:child_process"
 import { createServer } from "node:http"
-import { readFile, appendFile, writeFile, mkdir, access, cp } from "node:fs/promises"
+import { readFile, appendFile, writeFile, mkdir } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import os from "node:os"
-import { readTraceEvents, summarizeResponse, requestTools } from "./trace.mjs"
+import { readTraceEvents, summarizeResponse, requestTools, withModelInputs } from "./trace.mjs"
+import { resolveCodexLauncher } from "./cli.mjs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { parseArgs } from "node:util"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const { values } = parseArgs({ options: { project: { type: "string" }, help: { type: "boolean" } } })
-if (values.help) { console.log('Usage: npm start [-- --project "path/to/project"]'); process.exit(0) }
+if (process.argv.length > 2) throw new Error("请使用 npm start 启动；项目目录在 config/settings.json 的 projectPath 中设置。")
+const CFG = JSON.parse(await readFile(process.env.VIZ_CONFIG_PATH ?? path.join(ROOT, "config", "settings.json"), "utf8"))
 const RUNTIME_DIR = path.resolve(process.env.VIZ_RUNTIME_DIR ?? path.join(ROOT, ".runtime"))
-const TARGET_PROJECT = path.resolve(values.project ?? process.env.VIZ_TARGET_PROJECT ?? path.join(RUNTIME_DIR, "workspace"))
+const projectPath = process.env.VIZ_TARGET_PROJECT || CFG.projectPath
+const TARGET_PROJECT = path.resolve(ROOT, projectPath || "examples/demo")
 await mkdir(RUNTIME_DIR, { recursive: true })
-if (!values.project && !process.env.VIZ_TARGET_PROJECT) {
-  try { await access(TARGET_PROJECT) }
-  catch (err) {
-    if (err.code !== "ENOENT") throw err
-    await cp(path.join(ROOT, "examples", "demo"), TARGET_PROJECT, { recursive: true })
-  }
-}
 const SOURCE_LOCK = JSON.parse(await readFile(path.join(ROOT, "src", "versions.json"), "utf8"))
 
 /* 自身日志同时落盘 —— 启动时无需 -RedirectStandardOutput（那会占住父 shell 管道导致卡死） */
@@ -47,7 +41,6 @@ const OC_BASE = `http://${HOST}:${OC_PORT}`
 const OC_PASSWORD = randomUUID()
 const AUTH = "Basic " + Buffer.from(`opencode:${OC_PASSWORD}`).toString("base64")
 
-const CFG = JSON.parse(await readFile(process.env.VIZ_CONFIG_PATH ?? path.join(ROOT, "config", "settings.json"), "utf8"))
 const LLM_UPSTREAM = process.env.LLM_UPSTREAM ?? CFG.upstream
 const OC_MODEL = `minimax/${CFG.opencode.model}`
 
@@ -57,11 +50,7 @@ let codexProc = null   // codex exec 子进程（每次运行一个）
 
 /* ── CLI 版本探测（适配性锚点：README「版本适配」表） ── */
 const versions = { opencode: "?", codex: "?" }
-const codexJs = process.env.CODEX_CLI_JS
-  ?? path.join(process.env.APPDATA ?? "", "npm", "node_modules", "@openai", "codex", "bin", "codex.js")
-const useCodexJs = !process.env.CODEX_CLI_EXE && (process.env.CODEX_CLI_JS || process.platform === "win32")
-const codexCommand = process.env.CODEX_CLI_EXE ?? (useCodexJs ? process.execPath : "codex")
-const codexPrefix = useCodexJs ? [codexJs] : []
+const { command: codexCommand, prefix: codexPrefix } = await resolveCodexLauncher()
 async function detectVersions() {
   const { execFile } = await import("node:child_process")
   const { promisify } = await import("node:util")
@@ -762,6 +751,12 @@ const server = createServer(async (req, res) => {
     if (![`${HOST}:${VIZ_PORT}`, `localhost:${VIZ_PORT}`].includes(req.headers.host)) return json(res, { error: "Invalid local Host" }, 403)
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return json(res, { error: "Cross-origin requests are not allowed" }, 403)
     if (req.method === "POST" && !req.headers["content-type"]?.startsWith("application/json")) return json(res, { error: "application/json is required" }, 415)
+    if (req.method === "GET" && ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js"].includes(url.pathname)) {
+      const javascript = await readFile(path.join(ROOT, "public", url.pathname.slice(1)))
+      res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" })
+      res.end(javascript)
+      return
+    }
     if (req.method === "GET" && url.pathname === "/") {
       const html = await readFile(path.join(ROOT, "public", "index.html"))
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
@@ -782,7 +777,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/llm-calls") {
-      json(res, { calls: llmCalls })
+      json(res, { calls: withModelInputs(llmCalls) })
       return
     }
 

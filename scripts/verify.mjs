@@ -36,6 +36,7 @@ async function stop() {
 }
 async function start(translated = false, defaultDemo = false) {
   const config = JSON.parse(await readFile(path.join(root, "config", "settings.json"), "utf8"))
+  config.projectPath = defaultDemo ? "examples/demo" : target
   config.codex = { useDefaultModel: !translated, model: translated ? "MiniMax-M3.1-Flash-Preview" : "gpt-6.1-sol" }
   const configPath = path.join(output, translated ? "translated-config.json" : "native-config.json")
   await writeFile(configPath, JSON.stringify(config))
@@ -43,7 +44,7 @@ async function start(translated = false, defaultDemo = false) {
   const env = { ...process.env, VIZ_CONFIG_PATH: configPath, VIZ_RUNTIME_DIR: data,
     VIZ_PORT: "4597", OC_PORT: "45341", LLM_PORT: "45342" }
   delete env.VIZ_TARGET_PROJECT
-  proc = spawn(process.execPath, [path.join(root, "src", "server.mjs"), ...(defaultDemo ? [] : ["--project", target])],
+  proc = spawn(process.execPath, [path.join(root, "src", "server.mjs")],
     { cwd: root, env, stdio: ["ignore", "pipe", "pipe", "ipc"] })
   proc.stdout.on("data", chunk => { log += chunk.toString() })
   proc.stderr.on("data", chunk => { log += chunk.toString() })
@@ -119,15 +120,20 @@ try {
   if (smokeOnly) {
     const template = await readFile(path.join(root, "examples", "demo", "README.md"), "utf8")
     assert.equal(await readFile(path.join(results.status.targetProject, "README.md"), "utf8"), template)
-    assert.notEqual(results.status.targetProject, path.join(root, "examples", "demo"))
+    assert.equal(results.status.targetProject, path.join(root, "examples", "demo"))
     const models = (await api("/api/models")).models
     assert.deepEqual(models.map(model => model.value), ["minimax/MiniMax-M3.1-Flash-Preview"])
-    results.checks.push({ name: "Startup, isolated demo copy and single-model registry (no model requests)", passed: true })
+    for (const asset of ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js"]) {
+      const response = await fetch(base + asset)
+      assert(response.ok && response.headers.get("content-type").includes("javascript"), "Browser Markdown assets must be available locally")
+      assert((await response.text()).length > 100)
+    }
+    results.checks.push({ name: "Startup, default demo directory and single-model registry (no model requests)", passed: true })
     await stop()
     await delay(500)
     const custom = await start()
     assert.equal(custom.targetProject, target)
-    results.checks.push({ name: "--project CLI argument selects the requested directory", passed: true })
+    results.checks.push({ name: "projectPath setting selects the requested directory", passed: true })
   } else {
   for (const [name, harness, filename, reject] of [
     ["native Codex context and file modification", "codex", "codex-proof.txt", false],

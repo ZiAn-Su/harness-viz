@@ -10,31 +10,35 @@
 
 ## 快速开始
 
-需要 **Node.js 22+**。克隆仓库后，在项目目录运行：
+先安装 [Node.js 22+](https://nodejs.org/)、[Codex CLI](https://developers.openai.com/codex/cli) 和 [OpenCode](https://opencode.ai/docs/)。CLI 按各自官方方式安装即可，**不要求用 npm 安装**；已安装可跳过。当前适配 Codex `0.160.0`、OpenCode `1.18.34`。
+
+首次使用 Codex，先登录一次（已登录可跳过）：
 
 ```sh
-npm install -g @openai/codex@0.160.0 opencode-ai@1.18.34
 codex login
+```
+
+下载或克隆此仓库后，在 `harness-viz` 文件夹打开终端，启动：
+
+```sh
 npm start
 ```
 
-打开 **http://127.0.0.1:4577** → 点击「演示任务」→「运行」。无需安装本项目的 npm 依赖。
+打开 **http://127.0.0.1:4577**，点击顶部「输入」→「演示」→「运行」。
 
-默认使用 Codex 官方模型 `gpt-6.1-sol`。演示项目自动复制到 `.runtime/workspace/`，默认任务在副本中执行，仓库示例不作为工作目录。
+默认工作目录为 `examples/demo`。
 
-要观察自己的项目：
-
-```sh
-npm start -- --project "/path/to/your-project"
-```
-
-任务会真实执行命令和修改文件，也会消耗模型额度。请先使用演示项目或独立分支。
+使用自己的项目：修改 [`config/settings.json`](config/settings.json) 中的 `projectPath`，然后重启。
 
 ## 能看到什么
 
 - **流程图**：源码机制及对应的事件记录。
 - **实时转写**：助手输出、工具调用、结果和权限询问。
 - **上下文详情**：直接查看客户端请求、工具定义和响应，并区分证据来源。
+
+查看模型输入：点击流程图中的「LLM 采样／调用」，展开请求记录。Codex 增量请求会按已捕获的响应链重建上下文；可复制或下载。它不是服务端最终加工后的提示词。
+
+顶部可独立开关输入框、流程图、转写和详情；隐藏面板后，其余面板自动扩展。转写支持 Markdown。
 
 ## 模型设置
 
@@ -55,10 +59,10 @@ Codex 也支持第三方模型：将 `codex.useDefaultModel` 设为 `false`，`c
 |---|---|
 | `config/` | 唯一的用户设置 |
 | `src/`、`public/` | 后端、版本信息与网页 |
-| `examples/demo/` | 可复制的最小演示项目 |
+| `examples/demo/` | 默认工作目录和演示文件 |
 | `tests/`、`scripts/` | 回归测试与开发验证工具 |
 | `docs/assets/` | 使用演示 GIF 与视频 |
-| `.runtime/` | 自动生成的工作副本、日志、认证和验证记录，**不提交 Git** |
+| `.runtime/` | 日志、认证和验证记录，**不提交 Git** |
 
 ## 边界与开发
 

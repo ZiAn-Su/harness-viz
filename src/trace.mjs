@@ -66,3 +66,45 @@ export function summarizeResponse(raw) {
     usage: raw?.token_usage ?? null,
   }
 }
+
+// Rebuild only the client-observable input. Mirrors Codex 0.160.0's response-chain
+// rule (rollout-trace/src/reducer/conversation.rs:69-105), not server token rendering.
+export function withModelInputs(calls) {
+  const responses = new Map(), memo = new Map()
+  const key = (call, responseID) => JSON.stringify([call.runID ?? null, call.sessionID ?? null, responseID])
+  for (const call of calls) {
+    const responseID = call.rawResponse?.response_id ?? call.trace?.terminal?.payload?.response_id
+    if (responseID) responses.set(key(call, responseID), call)
+  }
+  const resolve = (call, visiting = new Set()) => {
+    if (memo.has(call)) return memo.get(call)
+    const raw = call.anthropicRequest ?? call.request?.request ?? call.request ?? {}
+    const anthropic = Boolean(call.anthropicRequest) || call.harness === "opencode"
+    const ownItems = anthropic ? raw.messages : raw.input
+    let items = Array.isArray(ownItems) ? ownItems : []
+    let complete = Array.isArray(ownItems), kind = call.anthropicRequest ? "translated" : "captured"
+    let chain = [call.index], missingResponseID = null
+    const previous = !anthropic ? raw.previous_response_id : null
+    if (previous) {
+      const parent = responses.get(key(call, previous))
+      if (!parent || visiting.has(parent) || parent === call || !Array.isArray(parent.rawResponse?.output_items)) {
+        complete = false; kind = "partial"; missingResponseID = previous
+      } else {
+        const ancestry = new Set(visiting); ancestry.add(call)
+        const prior = resolve(parent, ancestry)
+        items = [...prior.items, ...parent.rawResponse.output_items, ...items]
+        complete = complete && prior.complete
+        kind = complete ? "reconstructed" : "partial"
+        chain = [...prior.chain, call.index]
+        missingResponseID = prior.missingResponseID
+      }
+    }
+    const embeddedTools = items.filter(item => item.type === "additional_tools").flatMap(item => item.tools ?? [])
+    const context = { kind, complete, format: anthropic ? "anthropic" : "responses", model: raw.model ?? call.model,
+      system: anthropic ? raw.system ?? null : raw.instructions ?? null, items,
+      tools: raw.tools ?? (embeddedTools.length ? embeddedTools : null), chain, previousResponseID: previous ?? null, missingResponseID }
+    memo.set(call, context)
+    return context
+  }
+  return calls.map(call => ({ ...call, modelInput: resolve(call) }))
+}

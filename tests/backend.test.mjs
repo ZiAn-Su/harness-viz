@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import vm from "node:vm"
 import { readFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
+import { withModelInputs } from "../src/trace.mjs"
 
 const source = await readFile(new URL("../src/server.mjs", import.meta.url), "utf8")
 function section(start, end = "\n/*") {
@@ -26,6 +27,7 @@ function backend(overrides = {}) {
   const wire = [], persisted = [], fetches = [], ocRequests = []
   const context = {
     URL, Buffer, TextDecoder, randomUUID,
+    withModelInputs,
     console: { log() {}, error() {} },
     createServer: callback => callback,
     HOST: "127.0.0.1", VIZ_PORT: 4577, LLM_PORT: 45322,

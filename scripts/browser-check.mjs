@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir, access } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import assert from "node:assert/strict"
+import { withModelInputs } from "../src/trace.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 if (!process.argv[2]) throw new Error("Usage: node browser-check.mjs <verification-directory>")
@@ -22,6 +23,11 @@ const html = await readFile(path.join(root, "public", "index.html"))
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1")
   if (url.pathname === "/") { res.setHeader("Content-Type", "text/html;charset=utf-8"); res.end(html); return }
+  if (["/vendor/marked.js", "/vendor/purify.js", "/markdown.js"].includes(url.pathname)) {
+    res.setHeader("Content-Type", "text/javascript;charset=utf-8")
+    res.end(await readFile(path.join(root, "public", url.pathname.slice(1))))
+    return
+  }
   if (url.pathname === "/api/stream") {
     res.writeHead(200, { "Content-Type": "text/event-stream" })
     res.write('data: {"type":"viz.connected","source":"viz","properties":{}}\n\n')
@@ -50,7 +56,7 @@ const server = createServer(async (req, res) => {
   }
   const data = url.pathname === "/api/status" ? results.status
     : url.pathname === "/api/last-run" ? replaying ? { events: [] } : runs[url.searchParams.get("harness")]
-    : url.pathname === "/api/llm-calls" ? { calls }
+    : url.pathname === "/api/llm-calls" ? { calls: withModelInputs(calls) }
     : url.pathname === "/api/models" ? { models: [{ value: results.status.ocModel, label: results.status.ocModel.split("/").pop() }] } : { error: "QA replay: read-only" }
   res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data))
 })
@@ -104,13 +110,37 @@ try {
     else if (data.method === "Runtime.consoleAPICalled" && data.params.type === "error") errors.push(data.params.args)
   }
   await command("Runtime.enable"); await command("Page.enable")
+  const resetPreferences = await command("Page.addScriptToEvaluateOnNewDocument", { source: 'localStorage.removeItem("harness-viz.views.desktop"); localStorage.removeItem("harness-viz.views.mobile")' })
   await command("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false })
   await command("Page.navigate", { url: "http://127.0.0.1:4598" })
   await wait('document.querySelector("[data-h=codex]")?.classList.contains("on")')
+  await command("Page.removeScriptToEvaluateOnNewDocument", { identifier: resetPreferences.identifier })
+  assert.equal(await evaluate("document.title"), "Coding Agent 实时可视化")
+  assert(await evaluate('document.querySelector("#composer").hidden && !document.querySelector("#evidenceBanner")'))
+  assert(await evaluate('document.querySelector("main").getBoundingClientRect().height > innerHeight - 90'))
+  const capturedBefore = await evaluate('document.querySelector("#llmBadge").textContent')
+  await evaluate('document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click()')
+  await delay(150)
+  assert(await evaluate('document.querySelector("#colTx").getBoundingClientRect().width > innerWidth * .9'))
+  await evaluate('document.querySelector("#toggle-transcript").click()')
+  assert(await evaluate('[...document.querySelectorAll(".workspace-panel")].every(panel => panel.hidden)'))
+  await evaluate('document.querySelector("#toggle-input").click(); document.querySelector("#prompt").value = "保留的草稿"')
+  assert(await evaluate('document.querySelector("#prompt").getBoundingClientRect().height <= 40'))
+  await evaluate('document.querySelector("#toggle-input").click(); document.querySelector("#toggle-input").click()')
+  assert.equal(await evaluate('document.querySelector("#prompt").value'), "保留的草稿")
+  await evaluate('document.querySelector("#toggle-input").click(); document.querySelector("#toggle-transcript").click()')
+  assert.equal(await evaluate('document.querySelector("#llmBadge").textContent'), capturedBefore)
+  await command("Page.reload")
+  await wait('document.querySelector("[data-h=codex]")?.classList.contains("on")')
+  assert(await evaluate('document.querySelector("#colFlow").hidden && document.querySelector("#colLlm").hidden && !document.querySelector("#colTx").hidden'))
+  await evaluate('document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click()')
+  checks.push("Header controls, single-line hidden composer, independent panels, reflow and persisted preferences")
   await evaluate('document.querySelector("[data-h=opencode]").click()')
   await wait(`document.querySelector("#llmBadge")?.textContent === "捕获请求: ${calls.filter(call => call.harness === "opencode").length}"`)
   await evaluate('document.querySelector("#fn-llm").click(); document.querySelector("#nodePanel .rec .hd").click()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("原始请求 JSON（完整")')
+  assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("模型输入")'))
+  assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.textContent.includes("system")'))
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("messages")'))
   await screenshot("opencode-desktop")
   checks.push("OpenCode real-event replay and full request panel")
@@ -119,8 +149,27 @@ try {
   await evaluate('document.querySelector("#nodePanel .rec .hd").click()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("原始请求 JSON（完整")')
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("native-trace")'))
+  assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.querySelector("summary").textContent.includes("developer")'))
+  const reconstructed = withModelInputs(calls).find(call => call.harness === "codex" && call.modelInput.kind === "reconstructed")
+  assert(reconstructed, "Actual native data must include a response-chain continuation")
+  await evaluate(`const targetRecord = store["c-llm"].find(record => record.kind === "llm" && record.data.index === ${reconstructed.index}); document.querySelectorAll("#nodePanel .rec .hd")[store["c-llm"].indexOf(targetRecord)].click()`)
+  await wait('document.querySelector("#nodePanel")?.textContent.includes("按响应链重建")')
+  assert.equal(await evaluate(`modelInputCache[${reconstructed.index}].items.length`), reconstructed.modelInput.items.length)
+  checks.push("Readable developer/system instructions and complete client response-chain reconstruction")
   await screenshot("codex-desktop")
   checks.push("Codex native-trace replay, source labeling and full request panel")
+  const markdown = '# Markdown 排版\n\n支持 **重点**、`行内代码` 和 [源码链接](https://github.com/openai/codex)。\n\n## 请求生命周期\n\n1. 组织上下文\n2. 执行工具\n3. 反馈结果\n\n> 工具结果进入下一次请求。\n\n| 阶段 | 内容 |\n| --- | --- |\n| 输入 | 指令与历史 |\n| 工具 | 文件与命令 |\n\n```js\nconst result = await runTool();\n```\n\n- [x] 完成读取\n- [ ] 等待修改'
+  await evaluate('document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click(); document.querySelector("#transcript").innerHTML = ""')
+  await evaluate(`appendText("qa-markdown", ${JSON.stringify(markdown)}, "text", false); bubbles["qa-markdown"].parentElement.querySelector(".who").textContent = "Markdown 排版测试"`)
+  await wait('document.querySelector("#transcript .markdown table") != null')
+  assert(await evaluate('document.querySelector("#transcript .markdown h1") && document.querySelector("#transcript .markdown strong") && document.querySelector("#transcript .markdown ol") && document.querySelector("#transcript .markdown blockquote") && document.querySelector("#transcript .markdown pre code.language-js")'))
+  const attack = '<img src=x onerror="window.__mdAttack=1"><script>window.__mdAttack=2</script><svg onload="window.__mdAttack=3"></svg><a href="javascript:window.__mdAttack=4" onclick="window.__mdAttack=5">bad</a><style>body{display:none}</style>'
+  await evaluate(`appendText("qa-unsafe", ${JSON.stringify(attack)}, "text", false)`)
+  await delay(100)
+  assert(await evaluate('!window.__mdAttack && !document.querySelector("#transcript script, #transcript img, #transcript svg, #transcript style, #transcript [onclick], #transcript [onerror], #transcript a[href^=javascript]")'))
+  await evaluate('bubbles["qa-unsafe"].parentElement.remove()')
+  await screenshot("markdown-desktop")
+  checks.push("Real GFM rendering and DOMPurify script/event/unsafe-URL sanitation")
   await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true })
   await delay(300)
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Mobile horizontal overflow")
@@ -133,9 +182,10 @@ try {
     await command("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false })
     await command("Page.reload")
     await wait('document.querySelector("[data-h=codex]")?.classList.contains("on")')
+    await evaluate('setView("flow", true); setView("details", true); setView("input", true)')
     const prompt = runs.codex.events.find(event => event.type === "viz.run").properties.prompt
     await evaluate(`document.querySelector("#prompt").value = ${JSON.stringify(prompt)}`)
-    const frames = path.join(evidence, "recording-frames")
+    const frames = path.join(evidence, "recording-frames-" + Date.now())
     const assets = path.join(root, "docs", "assets")
     await mkdir(frames, { recursive: true }); await mkdir(assets, { recursive: true })
     let frame = 0, capturing = false, pendingCapture = Promise.resolve()
@@ -156,7 +206,9 @@ try {
       await evaluate('document.querySelector("#fn-c-tool").click(); document.querySelector("#nodePanel .rec .hd")?.click()')
       await delay(1800)
       await evaluate('document.querySelector("#fn-c-llm").click(); document.querySelector("#nodePanel .rec .hd")?.click()')
-      await delay(2200)
+      await delay(3200)
+      await evaluate(`const requestRecord = store["c-llm"].find(record => record.kind === "llm" && record.data.index === ${reconstructed.index}); document.querySelectorAll("#nodePanel .rec .hd")[store["c-llm"].indexOf(requestRecord)].click()`)
+      await delay(3200)
       await evaluate('document.querySelector("#fn-c-history").click(); document.querySelector("[data-tab=doc]").click()')
       await delay(1800)
     } finally { clearInterval(timer); await pendingCapture }

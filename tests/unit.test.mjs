@@ -4,7 +4,7 @@ import vm from "node:vm"
 import { readFile, writeFile, mkdir, mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { readTraceEvents, summarizeResponse, requestTools } from "../src/trace.mjs"
+import { readTraceEvents, summarizeResponse, requestTools, withModelInputs } from "../src/trace.mjs"
 
 const server = await readFile(new URL("../src/server.mjs", import.meta.url), "utf8")
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8")
@@ -73,6 +73,47 @@ test("Responses Lite tool definitions and omitted continuation definitions diffe
     { names: ["functions.read"], location: "input.additional_tools" })
   assert.deepEqual(requestTools({ previous_response_id: "response-1", input: [] }), { names: null, location: "not-in-this-payload" })
   assert.deepEqual(requestTools({ tools: [] }), { names: [], location: "tools" })
+})
+
+test("native response chains reconstruct ordered input including developer instructions and tool feedback", () => {
+  const prefix = [{ type: "additional_tools", role: "developer", tools: [{ type: "function", name: "read" }] },
+    { type: "message", role: "developer", content: [{ type: "input_text", text: "BASE_INSTRUCTION" }] },
+    { type: "message", role: "user", content: [{ type: "input_text", text: "TASK" }] }]
+  const output = [{ type: "function_call", name: "read", call_id: "call-1", arguments: "{}" }]
+  const feedback = { type: "function_call_output", call_id: "call-1", output: "UNIQUE_FEEDBACK" }
+  const calls = [
+    { index: 1, harness: "codex", runID: "run", sessionID: "thread", request: { model: "model", instructions: "", input: prefix }, rawResponse: { response_id: "response-1", output_items: output } },
+    { index: 2, harness: "codex", runID: "run", sessionID: "thread", request: { previous_response_id: "response-1", input: [feedback] } },
+  ]
+  const enriched = withModelInputs(calls)
+  assert.equal(enriched[1].modelInput.complete, true)
+  assert.equal(enriched[1].modelInput.kind, "reconstructed")
+  assert.deepEqual(enriched[1].modelInput.items, [...prefix, ...output, feedback])
+  assert.deepEqual(enriched[1].modelInput.chain, [1, 2])
+  assert.deepEqual(enriched[1].modelInput.tools, prefix[0].tools)
+  assert.deepEqual(calls[1].request.input, [feedback], "wire payload must remain unmodified")
+})
+
+test("missing or cross-thread response references stay explicitly incomplete; full snapshots reset the chain", () => {
+  const calls = [
+    { index: 1, harness: "codex", runID: "run", sessionID: "other", request: { input: [] }, rawResponse: { response_id: "response-1", output_items: [] } },
+    { index: 2, harness: "codex", runID: "run", sessionID: "thread", request: { previous_response_id: "response-1", input: [{ type: "message", role: "user", content: [] }] } },
+    { index: 3, harness: "codex", runID: "run", sessionID: "thread", request: { input: [{ type: "message", role: "developer", content: [{ text: "post-compaction snapshot" }] }] } },
+  ]
+  const enriched = withModelInputs(calls)
+  assert.equal(enriched[1].modelInput.complete, false)
+  assert.equal(enriched[1].modelInput.missingResponseID, "response-1")
+  assert.equal(enriched[2].modelInput.kind, "captured")
+  assert.deepEqual(enriched[2].modelInput.chain, [3])
+})
+
+test("translated model input describes actual upstream payload instead of the Codex client payload", () => {
+  const call = { index: 1, harness: "codex", request: { instructions: "ORIGINAL", input: [] },
+    anthropicRequest: { model: "third-party", system: "ADAPTED", messages: [{ role: "user", content: "UPSTREAM" }], tools: [] } }
+  const { modelInput } = withModelInputs([call])[0]
+  assert.equal(modelInput.kind, "translated")
+  assert.equal(modelInput.system, "ADAPTED")
+  assert.deepEqual(modelInput.items, call.anthropicRequest.messages)
 })
 
 test("trace cursor commits are atomic across bundles after an unreadable payload", async () => {

@@ -1,4 +1,5 @@
 {
+  "projectPath": "examples/demo",
   "upstream": "https://api.minimaxi.com",
   "upstreamEnvKey": "MINIMAX_API_KEY",
   "codex": {

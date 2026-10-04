@@ -4,59 +4,66 @@
 <meta charset="UTF-8" />
 <meta http-equiv="Cache-Control" content="no-store" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>opencode Harness 实时可视化</title>
+<title>Coding Agent 实时可视化</title>
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2d333b;
-    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff; --green: #3fb950;
-    --orange: #d29922; --red: #f85149; --purple: #bc8cff; --cyan: #39c5cf;
-    --w-left: 720px; --w-right: 430px;
+    color-scheme: dark;
+    --bg: #090e17; --panel: #111925; --panel2: #172231; --border: #273345;
+    --text: #e4ebf4; --dim: #93a2b7; --accent: #76a9fa; --green: #68ce9c;
+    --orange: #eab96b; --red: #f08187; --purple: #b8a2ed; --cyan: #7cbccc;
+    --w-left: 36; --w-right: 27;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: var(--bg); color: var(--text);
     font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+    font-size: 14px; -webkit-font-smoothing: antialiased;
   }
+  [hidden] { display: none !important; }
   code, .mono { font-family: "Cascadia Code", Consolas, monospace; }
 
   header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border); flex-shrink: 0;
+    display: flex; align-items: center; gap: 14px; min-height: 56px;
+    padding: 10px 18px; background: #101722; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    position: relative; z-index: 10;
   }
-  header h1 { font-size: 15px; font-weight: 600; }
-  .badge { font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid var(--border); color: var(--dim); max-width: 100%; overflow-wrap: anywhere; }
+  header h1 { font-size: 16px; font-weight: 650; letter-spacing: -.3px; white-space: nowrap; }
+  .badge { font-size: 12px; padding: 4px 9px; border-radius: 7px; color: var(--dim); max-width: 100%; overflow-wrap: anywhere; }
   .badge.on { color: var(--green); border-color: var(--green); }
   .badge.busy { color: var(--orange); border-color: var(--orange); }
   #sessionLabel { font-size: 11px; color: var(--dim); }
   .spacer { flex: 1; }
 
   #composer {
-    display: flex; gap: 8px; padding: 8px 16px; background: var(--panel);
-    border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: flex-end;
+    display: flex; gap: 8px; padding: 7px 18px; background: #101722;
+    border-bottom: 1px solid var(--border); flex-shrink: 0; align-items: center;
   }
   #prompt {
-    flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 12px; font-size: 13px; resize: none; height: 52px; font-family: inherit;
+    flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 12px; font-size: 14px; resize: none; height: 36px; line-height: 20px; font-family: inherit;
+    white-space: pre; overflow: auto;
   }
   #prompt:focus { outline: none; border-color: var(--accent); }
-  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px; font-size: 12px; max-width: 250px; }
-  button { background: var(--accent); color: #0d1117; border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; font-size: 12px; max-width: 220px; }
+  button { background: var(--accent); color: #0d1117; border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background .15s, color .15s; }
   button:hover { filter: brightness(1.1); }
   button:disabled { opacity: .4; cursor: not-allowed; }
   button.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
   button.danger { background: var(--red); color: #fff; }
+  button:focus-visible, summary:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
-  main { flex: 1; display: flex; min-height: 0; }
-  .colhead { font-size: 12px; color: var(--dim); font-weight: 600; padding: 10px 14px 6px; letter-spacing: .5px; }
+  main { flex: 1; display: flex; min-height: 0; gap: 0; padding: 12px; overflow: hidden; }
+  .colhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text); font-weight: 600; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 
   /* 拖拽分隔条 */
-  .resizer { width: 6px; flex-shrink: 0; cursor: col-resize; background: transparent; }
+  .resizer { width: 10px; flex-shrink: 0; cursor: col-resize; background: transparent; border-radius: 6px; }
   .resizer:hover, .resizer.dragging { background: var(--accent); opacity: .5; }
   body.resizing { cursor: col-resize; user-select: none; }
 
   /* ── 左：流程图 ── */
-  #colFlow { width: var(--w-left); flex-shrink: 0; background: var(--panel); display: flex; flex-direction: column; }
+  #colFlow, #colTx, #colLlm { min-width: 0; min-height: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px #00000015; }
+  #colFlow { flex: var(--w-left) 1 0%; display: flex; flex-direction: column; }
   #flowWrap { position: relative; flex: 1; overflow: auto; }
   .flowsvg { position: absolute; inset: 0; width: 700px; height: 1070px; pointer-events: none; }
   .fnode {
@@ -65,11 +72,11 @@
   }
   .fnode:hover { border-color: var(--accent); }
   .fnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.35); }
-  .fnode .t { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+   .fnode .t { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; padding-right: 14px; }
   .fnode .s { font-size: 10px; color: var(--dim); margin-top: 2px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .fnode .cnt {
-    position: absolute; right: -6px; top: -8px; font-size: 10px; color: var(--bg);
-    background: var(--accent); border-radius: 9px; padding: 1px 7px; display: none; font-weight: 700;
+    position: absolute; right: 6px; top: 6px; font-size: 10px; color: #c5d7f0;
+    background: #2a3b52; border-radius: 5px; padding: 1px 5px; display: none; font-weight: 600;
   }
   .fnode.active { border-color: var(--green); box-shadow: 0 0 16px rgba(63,185,80,.45); }
   .fnode.active .t::before { content: "●"; color: var(--green); animation: blink .8s infinite; }
@@ -92,21 +99,22 @@
   .fdia .cnt { position: absolute; right: 8px; top: -8px; font-size: 10px; color: var(--bg); background: var(--accent); border-radius: 9px; padding: 1px 7px; display: none; font-weight: 700; z-index: 3; }
 
   /* ── 中：转写 ── */
-  #colTx { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #transcript { flex: 1; overflow-y: auto; padding: 12px 16px; }
-  .msg { margin-bottom: 10px; max-width: 900px; }
+  #colTx { flex: 37 1 0%; display: flex; flex-direction: column; }
+  #transcript { flex: 1; overflow-y: auto; padding: 20px; }
+  .msg { margin-bottom: 20px; max-width: 100%; }
   .msg .who { font-size: 11px; color: var(--dim); margin-bottom: 3px; }
-  .msg .body { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px 13px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-  .msg.user .body { background: #1f3b57; border-color: #28527a; }
+  .msg .body { background: #141e2c; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .body { background: #182c44; border-color: #2a4161; }
   .msg.child .who { color: var(--purple); }
   .msg.child .body { border-style: dashed; }
   .msg.tool .body { border-left: 3px solid var(--purple); font-size: 12px; }
   .msg.tool .toolname { color: var(--purple); font-weight: 700; }
+  .tool-title { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; color: var(--dim); font-size: 12px; }
   .msg.tool .status { font-size: 11px; padding: 1px 8px; border-radius: 8px; margin-left: 8px; }
   .msg.tool .status.running, .msg.tool .status.pending { background: rgba(210,153,34,.2); color: var(--orange); }
   .msg.tool .status.completed { background: rgba(63,185,80,.2); color: var(--green); }
   .msg.tool .status.error { background: rgba(248,81,73,.2); color: var(--red); }
-  .msg.tool pre { margin-top: 6px; background: var(--bg); border-radius: 6px; padding: 8px; overflow: auto; font-size: 11px; color: var(--dim); max-height: 200px; }
+  .msg.tool pre { margin-top: 6px; background: var(--bg); border-radius: 6px; padding: 10px; overflow: auto; font-size: 12px; color: var(--text); max-height: 200px; }
   .msg.reasoning .body { border-left: 3px solid var(--cyan); color: var(--dim); font-size: 12px; }
   .msg.error .body { border-left: 3px solid var(--red); color: var(--red); }
   .msg.info .body { border-left: 3px solid var(--orange); color: var(--dim); font-size: 12px; }
@@ -123,8 +131,8 @@
   #eventlog .llm { color: var(--cyan); }
 
   /* ── 右：节点面板（双 tab） ── */
-  #colLlm { width: var(--w-right); flex-shrink: 0; background: var(--panel); display: flex; flex-direction: column; }
-  #nodeTitle { font-size: 13px; font-weight: 700; padding: 10px 14px 0; }
+  #colLlm { flex: var(--w-right) 1 0%; display: flex; flex-direction: column; }
+  #nodeTitle { font-size: 13px; font-weight: 600; padding: 10px 14px 0; overflow-wrap: anywhere; }
   #nodeTitle .sub { font-weight: 400; font-size: 11px; color: var(--dim); }
   .tabs { display: flex; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--border); }
   .tab {
@@ -135,16 +143,16 @@
   #nodePanel { flex: 1; overflow-y: auto; padding: 8px 12px 16px; }
 
   .rec { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; overflow: hidden; }
-  .rec > .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; font-size: 12px; overflow-wrap: anywhere; }
+  .rec > .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
   .rec > .hd:hover { background: rgba(88,166,255,.08); }
   .rec .idx { background: var(--cyan); color: #062b2e; font-weight: 700; border-radius: 8px; padding: 1px 8px; font-size: 11px; }
   .rec .tm { color: var(--dim); font-size: 11px; }
   .rec .ms { margin-left: auto; color: var(--dim); font-size: 11px; }
-  .rec .meta { font-size: 11px; color: var(--dim); padding: 0 12px 8px; line-height: 1.5; }
+  .rec .meta { font-size: 12px; color: var(--dim); padding: 0 12px 8px; line-height: 1.6; }
   .rec .detail { display: none; border-top: 1px solid var(--border); padding: 8px 12px; }
   .rec.open .detail { display: block; }
   .rec h4 { font-size: 11px; color: var(--cyan); margin: 8px 0 4px; }
-  .rec pre { background: var(--bg); border-radius: 6px; padding: 8px; font-size: 10.5px; color: var(--text); overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; }
+  .rec pre { background: var(--bg); border-radius: 6px; padding: 10px; font-size: 12px; color: var(--text); overflow: auto; max-height: 360px; white-space: pre-wrap; word-break: break-word; }
   .rec .mrole { font-weight: 700; font-size: 11px; }
   .rec .mrole.user { color: var(--accent); }
   .rec .mrole.assistant { color: var(--green); }
@@ -195,7 +203,7 @@
   .hbtn.on { background: var(--accent); color: #06202e; font-weight: 700; }
 
   /* 节点说明 tab */
-  .doc { font-size: 12.5px; line-height: 1.7; padding: 6px 4px; }
+  .doc { font-size: 14px; line-height: 1.8; padding: 8px 4px; }
   .doc h3 { font-size: 13px; color: var(--accent); margin: 12px 0 4px; }
   .doc h3:first-child { margin-top: 2px; }
   .doc p { margin: 6px 0; color: var(--text); }
@@ -213,55 +221,129 @@
   #permModal pre { background: var(--bg); border-radius: 6px; padding: 8px; font-size: 11px; color: var(--dim); max-height: 160px; overflow: auto; margin: 8px 0; }
   #permModal .actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; }
   #permModal .actions button { padding: 8px 16px; font-size: 13px; }
-  #evidenceBanner { padding: 6px 16px; font-size: 11px; color: var(--dim); border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .evidence { color: var(--cyan); font-size: 10px; }
   .doc a { color: var(--accent); overflow-wrap: anywhere; }
   details.raw { margin: 6px 0; font-size: 11px; }
   details.raw summary { cursor: pointer; color: var(--cyan); white-space: normal; }
   details.raw pre, #eventlog pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; background: var(--bg); padding: 8px; }
   #eventlog .line { white-space: normal; overflow-wrap: anywhere; }
-  @media (max-width: 1200px) {
-    body { height: auto; min-height: 100vh; overflow: auto; }
-    header, #composer { flex-wrap: wrap; }
-    #prompt { min-width: 200px; }
-    main { flex-direction: column; }
-    #colFlow, #colLlm, #colTx { width: 100%; min-width: 0; }
-    #flowWrap { height: 650px; flex: none; overflow: auto; cursor: auto; touch-action: pan-x pan-y; }
-    #flowCanvas { position: relative; }
-    #transcript { min-height: 240px; max-height: 600px; }
-    #nodePanel { min-height: 240px; max-height: 650px; }
-    .resizer { display: none; }
+  .panel-toggle { background: transparent; color: var(--dim); border: 1px solid transparent; padding: 7px 10px; font-size: 12px; }
+  .panel-toggle[aria-pressed="true"] { color: var(--accent); background: #76a9fa12; border-color: #76a9fa35; }
+  #viewControls { display: flex; gap: 4px; }
+  #viewMenu { display: contents; }
+  #viewMenu > summary { display: none; }
+  #runInfo { position: relative; }
+  #runInfo > summary { list-style: none; cursor: pointer; color: var(--dim); padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+  #runInfo > summary::-webkit-details-marker, #viewMenu > summary::-webkit-details-marker { display: none; }
+  .info-popover { position: absolute; top: 42px; right: 0; width: 350px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 90px); overflow: auto; padding: 16px; background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px #0008; font-size: 12px; line-height: 1.8; }
+  .info-popover .badge { display: block; padding: 0; margin-bottom: 5px; }
+  .info-popover dt { color: var(--dim); margin-top: 10px; }
+  .info-popover dd { overflow-wrap: anywhere; }
+  .flow-actions { display: flex; gap: 3px; }
+  .flow-actions button { padding: 3px 8px; background: transparent; color: var(--dim); border: 1px solid var(--border); font-size: 12px; }
+  #workspaceEmpty { flex: 1; align-self: center; text-align: center; color: var(--dim); }
+  .record-meta { padding: 0 12px 10px; font-size: 11px; color: var(--dim); }
+  .record-meta summary { cursor: pointer; }
+  .record-meta .meta { padding: 8px 0 0; }
+  .rec-action { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 500; }
+  .model-input { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 14px; }
+  .model-input h4 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 0; }
+  .model-input-note { color: var(--dim); font-size: 11px; line-height: 1.6; margin-bottom: 8px; }
+  .model-input-body { max-height: 65vh; overflow: auto; }
+  .input-message { border-top: 1px solid var(--border); padding: 8px 0; }
+  .input-message summary { cursor: pointer; font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+  .input-message pre { max-height: none !important; font-size: 12px; line-height: 1.75; margin-top: 8px; }
+  .markdown { white-space: normal !important; font-size: 15px !important; line-height: 1.8 !important; }
+  .markdown > :first-child { margin-top: 0; }
+  .markdown > :last-child { margin-bottom: 0; }
+  .markdown p { margin: 0 0 12px; }
+  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-weight: 650; line-height: 1.4; margin: 22px 0 12px; color: var(--text); }
+  .markdown h1 { font-size: 23px; } .markdown h2 { font-size: 20px; } .markdown h3 { font-size: 17px; }
+  .markdown ul, .markdown ol { padding-left: 24px; margin: 10px 0 14px; }
+  .markdown li { margin: 5px 0; }
+  .markdown li p { margin-bottom: 6px; }
+  .markdown blockquote { border-left: 3px solid var(--accent); margin: 14px 0; padding: 6px 14px; color: var(--dim); background: #76a9fa08; border-radius: 0 6px 6px 0; }
+  .markdown code { background: #080d1680; color: #bfd6fa; padding: 2px 5px; border: 1px solid #35435a; border-radius: 5px; font-size: .88em; }
+  .markdown pre { max-width: 100%; overflow: auto; padding: 14px; margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; background: #0a111c; }
+  .markdown pre code { padding: 0; border: 0; background: none; color: var(--text); white-space: pre; font-size: 13px; line-height: 1.65; }
+  .markdown table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+  .markdown th, .markdown td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; }
+  .markdown th { background: var(--panel2); color: #c9d8ef; font-weight: 600; }
+  .markdown a { color: var(--accent); text-underline-offset: 3px; }
+  .markdown hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+  .md-check { color: var(--accent); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #46546a; border-radius: 8px; border: 2px solid var(--panel); }
+  ::-webkit-scrollbar-track { background: transparent; }
+  #harnessSwitch { padding: 3px; gap: 2px; background: var(--bg); }
+  .hbtn { border-radius: 5px; padding: 5px 12px; }
+  .hbtn.on { background: #253c5f; color: #d8e8ff; }
+  @media (max-width: 1050px) { header { gap: 9px; padding: 9px 12px; } header h1 { font-size: 14px; } .panel-toggle { padding: 6px 7px; } }
+  @media (max-width: 760px) {
+    header { flex-wrap: wrap; gap: 8px; }
+    header h1 { flex: 1; font-size: 14px; }
+    #harnessSwitch { order: 4; }
+    #connBadge { display: none; }
+    .spacer { display: none; }
+    #viewMenu { display: block; position: relative; margin-left: auto; order: 5; }
+    #viewMenu > summary { display: block; cursor: pointer; font-size: 12px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; }
+    #viewControls { position: absolute; right: 0; top: 38px; flex-direction: column; min-width: 120px; padding: 8px; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px #0006; }
+    #viewMenu:not([open]) #viewControls { display: none; }
+    main { flex-direction: column; padding: 8px; gap: 8px; }
+    #colFlow, #colTx, #colLlm { flex: 1 1 0%; width: 100%; }
+    .resizer { display: none !important; }
+    #composer { padding: 7px 10px; gap: 6px; }
+    #composer #modelSel, #codexModelBadge { display: none !important; }
+    #prompt { font-size: 13px; }
+    #composer button { padding: 7px 9px; font-size: 12px; }
+    #transcript { padding: 14px; }
+    .colhead { padding: 9px 12px; }
   }
 </style>
 </head>
 <body>
   <header>
-    <h1 id="appTitle">opencode Harness 实时可视化</h1>
+    <h1 id="appTitle">Coding Agent 实时可视化</h1>
     <div id="harnessSwitch">
-      <button class="hbtn on" data-h="opencode">opencode</button>
-      <button class="hbtn" data-h="codex">codex</button>
+      <button class="hbtn on" data-h="opencode">OpenCode</button>
+      <button class="hbtn" data-h="codex">Codex</button>
     </div>
-    <span id="connBadge" class="badge">连接中…</span>
-    <span id="runBadge" class="badge">空闲</span>
-    <span id="sessionLabel"></span>
-    <span id="verBadge" class="badge mono" style="color:var(--dim)" title="运行版本与审计 sourceLock"></span>
+    <span id="connBadge" class="badge">连接中</span>
+    <span id="runBadge" class="badge">就绪</span>
+    <button class="danger" id="abortBtn" hidden disabled>停止</button>
     <div class="spacer"></div>
-    <span class="badge mono" id="llmBadge" title="API 边界捕获请求数（含重试，不等于内部迭代）">捕获请求: 0</span>
+    <details id="viewMenu">
+      <summary>视图</summary>
+      <div id="viewControls" aria-label="显示控制">
+        <button id="toggle-input" class="panel-toggle" data-view="input" aria-controls="composer" aria-pressed="false">输入</button>
+        <button id="toggle-flow" class="panel-toggle" data-view="flow" aria-controls="colFlow" aria-pressed="true">流程图</button>
+        <button id="toggle-transcript" class="panel-toggle" data-view="transcript" aria-controls="colTx" aria-pressed="true">转写</button>
+        <button id="toggle-details" class="panel-toggle" data-view="details" aria-controls="colLlm" aria-pressed="true">详情</button>
+      </div>
+    </details>
+    <details id="runInfo">
+      <summary title="查看模型、工作目录和运行信息">信息</summary>
+      <div class="info-popover">
+        <dl><dt>模型</dt><dd id="activeModel">—</dd><dt>工作目录</dt><dd id="workDirectory">—</dd></dl>
+        <div class="badge mono" id="llmBadge" title="客户端捕获的请求数，可能包含重试">捕获请求: 0</div>
+        <div id="sessionLabel"></div>
+        <div id="verBadge" class="badge mono"></div>
+        <details class="raw"><summary>源码版本</summary><pre id="sourceInfo"></pre></details>
+      </div>
+    </details>
   </header>
 
-  <div id="composer">
+  <div id="composer" hidden>
     <select id="modelSel" title="模型（opencode 可选）"></select>
-    <span id="codexModelBadge" class="badge mono" style="display:none;padding:7px 12px" title="模型与捕获方式以 /api/status 为准"></span>
-    <textarea id="prompt" placeholder="输入提示词，驱动真实 opencode harness…（Ctrl+Enter 运行）"></textarea>
-    <button class="ghost" id="demoBtn">演示任务</button>
+    <span id="codexModelBadge" class="badge mono" style="display:none" title="当前模型"></span>
+    <textarea id="prompt" rows="1" wrap="off" placeholder="输入任务，Enter 运行" aria-label="任务提示词"></textarea>
+    <button class="ghost" id="demoBtn">演示</button>
     <button id="runBtn">运行</button>
-    <button class="danger" id="abortBtn" disabled>中断</button>
   </div>
 
-  <div id="evidenceBanner">源码机制简图，非内部函数 trace · 直接事件 / API 边界捕获 / 解析推断分别标记 · 未直接观测不代表跳过 · ended / completed 不代表任务正确</div>
   <main>
-    <div id="colFlow">
-      <div class="colhead">HARNESS 流程图（点击节点看记录与说明 · 滚轮缩放 · 拖拽平移 · <a id="flowReset" style="cursor:pointer;color:var(--accent)">重置视图</a>）</div>
+    <div id="colFlow" class="workspace-panel">
+      <div class="colhead"><span>流程图</span><div class="flow-actions"><button id="flowZoomOut" title="缩小">−</button><button id="flowZoomIn" title="放大">＋</button><button id="flowReset" title="适配面板">适配</button></div></div>
       <div id="flowWrap"><div id="flowCanvas">
         <div id="flowOpencode">
         <svg id="flowSvg" class="flowsvg" viewBox="0 0 700 1070">
@@ -395,15 +477,16 @@
     </div>
     <div class="resizer" id="rz1"></div>
 
-    <div id="colTx">
-      <div class="colhead">实时转写（user / assistant / 工具调用）</div>
+    <div id="colTx" class="workspace-panel">
+      <div class="colhead">实时转写</div>
       <div id="transcript"></div>
       <div id="logbar">▸ 原始事件日志 <span id="logCount">(0)</span></div>
       <div id="eventlog"></div>
     </div>
     <div class="resizer" id="rz2"></div>
 
-    <div id="colLlm">
+    <div id="colLlm" class="workspace-panel">
+      <div class="colhead">节点详情</div>
       <div id="nodeTitle">…</div>
       <div class="tabs">
         <div class="tab on" data-tab="records">运行记录</div>
@@ -411,13 +494,14 @@
       </div>
       <div id="nodePanel"></div>
     </div>
+    <div id="workspaceEmpty" hidden>在顶部选择需要显示的面板</div>
   </main>
 
   <div id="permModal">
     <div class="card">
-      <h3>⚠ 权限询问（Permission.ask — permission/index.ts:67，工具已挂起等待答复）</h3>
+      <h3>允许此操作？</h3>
       <div class="detail" id="permDetail"></div>
-      <pre id="permMeta"></pre>
+      <details class="raw"><summary>详细信息</summary><pre id="permMeta"></pre></details>
       <div class="actions">
         <button class="danger" data-reply="reject">拒绝</button>
         <button class="ghost" data-reply="once">允许一次</button>
@@ -426,10 +510,51 @@
     </div>
   </div>
 
+<script src="/vendor/marked.js"></script>
+<script src="/vendor/purify.js"></script>
+<script src="/markdown.js"></script>
 <script>
 /* ═══════════ 工具函数 ═══════════ */
 const escapeHtml = (s) => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML }
 const now = () => new Date().toLocaleTimeString("zh-CN") + "." + String(Date.now() % 1000).padStart(3, "0")
+
+/* View preferences never reset the underlying run or its event history. */
+const PANEL_IDS = { input: "composer", flow: "colFlow", transcript: "colTx", details: "colLlm" }
+const smallScreen = () => window.matchMedia("(max-width: 760px)").matches
+const layoutKey = () => "harness-viz.views." + (smallScreen() ? "mobile" : "desktop")
+let layout = { input: false, flow: !smallScreen(), transcript: true, details: !smallScreen() }
+let statusSnapshot = {}
+function applyLayout() {
+  document.getElementById("viewMenu").open = !smallScreen()
+  for (const [name, id] of Object.entries(PANEL_IDS)) {
+    document.getElementById(id).hidden = !layout[name]
+    document.getElementById("toggle-" + name).setAttribute("aria-pressed", String(layout[name]))
+  }
+  document.getElementById("rz1").hidden = !(layout.flow && (layout.transcript || layout.details))
+  document.getElementById("rz2").hidden = !(layout.transcript && layout.details)
+  document.getElementById("workspaceEmpty").hidden = layout.flow || layout.transcript || layout.details
+}
+function setView(name, visible = !layout[name]) {
+  if (!(name in PANEL_IDS)) return
+  layout[name] = visible
+  applyLayout()
+  try { localStorage.setItem(layoutKey(), JSON.stringify(layout)) } catch {}
+  if (name === "input" && visible) document.getElementById("prompt").focus()
+}
+for (const name of Object.keys(PANEL_IDS)) document.getElementById("toggle-" + name).onclick = () => setView(name)
+function restoreLayout() {
+  layout = { input: false, flow: !smallScreen(), transcript: true, details: !smallScreen() }
+  try {
+    const saved = JSON.parse(localStorage.getItem(layoutKey()) ?? "null")
+    for (const name of Object.keys(PANEL_IDS)) if (typeof saved?.[name] === "boolean") layout[name] = saved[name]
+  } catch {}
+  applyLayout()
+}
+window.matchMedia("(max-width: 760px)").addEventListener?.("change", restoreLayout)
+function updateModelInfo() {
+  document.getElementById("activeModel").textContent = harness === "codex"
+    ? statusSnapshot.codexModel ?? "—" : document.getElementById("modelSel").selectedOptions?.[0]?.textContent ?? statusSnapshot.ocModel ?? "—"
+}
 
 /* ═══════════ 流程图高亮 ═══════════ */
 const activeTimers = {}
@@ -507,7 +632,7 @@ function selectNode(id) {
     `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} 条记录</span>`
   renderPanel()
 }
-document.querySelectorAll(".fnode,.fdia").forEach(el => el.onclick = () => selectNode(el.dataset.node))
+document.querySelectorAll(".fnode,.fdia").forEach(el => el.onclick = () => { setView("details", true); selectNode(el.dataset.node) })
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   activeTab = t.dataset.tab
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t))
@@ -520,13 +645,14 @@ function renderRecords() {
   document.getElementById("nodeTitle").innerHTML =
     `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} 条记录</span>`
   const panel = document.getElementById("nodePanel")
-  if (!list.length) { panel.innerHTML = `<div class="empty">未直接观测<br>无记录不证明该机制被跳过；此图不是内部函数 trace。</div>`; return }
+  if (!list.length) { panel.innerHTML = `<div class="empty">暂无记录</div>`; return }
   panel.innerHTML = ""
   for (const rec of list) {
     const div = document.createElement("div"); div.className = "rec"
-    div.innerHTML = `<div class="hd"><span class="idx">${rec.seq}</span><b>${escapeHtml(rec.title)}</b><span class="tm">${escapeHtml(rec.time)}</span></div>
-      <div class="meta evidence">${{ direct: "直接事件", boundary: "API 边界捕获", inferred: "解析推断（非执行证明）" }[rec.evidence]} · source=${escapeHtml(rec.source)}</div>
-      ${rec.meta ? `<div class="meta">${rec.meta}</div>` : ""}
+    const time = Number.isNaN(Date.parse(rec.time)) ? rec.time : new Date(rec.time).toLocaleTimeString("zh-CN")
+    div.innerHTML = `<div class="hd" title="${rec.kind === "llm" ? "查看模型输入与响应" : "查看记录"}"><span class="idx">${rec.seq}</span><b>${escapeHtml(rec.title)}</b><span class="tm" title="${escapeHtml(rec.time)}">${escapeHtml(time)}</span>${rec.kind === "llm" ? '<span class="rec-action">查看输入</span>' : ""}</div>
+      <details class="record-meta"><summary>${{ direct: "事件", boundary: "请求", inferred: "推断" }[rec.evidence]} · ${escapeHtml(rec.source)}</summary>
+      ${rec.meta ? `<div class="meta">${rec.meta}</div>` : ""}</details>
       <div class="detail"><div class="waiting">展开加载中…</div></div>`
     div.querySelector(".hd").onclick = () => toggleRecDetail(div, rec)
     panel.appendChild(div)
@@ -567,7 +693,11 @@ function renderLlmCall(c) {
   const original = c.request ?? {}
   const r = original.request ?? original
   const codex = c.harness === "codex"
-  let html = `<div class="meta">source=${escapeHtml(c.source ?? "未标注")} · 捕获边界内容完整展示，不代表服务端最终提示词、完整逻辑历史或完整 reasoning。</div>`
+  const context = c.modelInput ?? { format: codex ? "responses" : "anthropic", items: codex ? r.input ?? [] : r.messages ?? [],
+    system: codex ? r.instructions ?? null : r.system ?? null, tools: r.tools ?? null, kind: "payload", complete: false, chain: [c.index] }
+  modelInputCache[c.index] = context
+  let html = renderModelInput(c.index, context)
+  html += `<div class="meta">source=${escapeHtml(c.source ?? "未标注")} · 以下保留原始载荷与响应。</div>`
   html += rawDetail("原始请求 JSON（完整，含 WS envelope）", original)
   const previous = r.previous_response_id ?? original.previous_response_id ?? c.trace?.previousResponseID
   if (codex) {
@@ -581,7 +711,7 @@ function renderLlmCall(c) {
     sysTextCache[c.index] = sysText
     html += `<h4>${codex ? "instructions（独立协议字段，不等同 system）" : "system（捕获字段）"} · ${sysText.length} 字符<span class="sysbar"><button class="mini" onclick="copySys(${Number(c.index)},this)">复制</button><button class="mini" onclick="dlSys(${Number(c.index)})">下载 .md</button><button class="mini" onclick="toggleSys(${Number(c.index)},this)">预览</button></span></h4>
       <pre id="sys-${c.index}">${escapeHtml(sysText)}</pre>
-      <div id="sysmd-${c.index}" class="mdview" style="display:none"></div>`
+        <div id="sysmd-${c.index}" class="mdview markdown" style="display:none"></div>`
   }
   html += rawDetail(codex ? "input（捕获字段，完整）" : "messages（捕获字段，完整）", codex ? r.input : r.messages)
   html += rawDetail("tools（完整原始定义，保留所有字段）", r.tools)
@@ -603,8 +733,41 @@ function renderLlmCall(c) {
   return html
 }
 
+function renderModelInput(index, context) {
+  const labels = { captured: "客户端原文", reconstructed: "按响应链重建", translated: "上游实际输入", partial: "输入链不完整", payload: "本次载荷" }
+  const items = context.items ?? []
+  let html = `<section class="model-input"><h4>模型输入 · ${items.length} 项 <span class="chip">${labels[context.kind] ?? "未确认"}</span><button class="mini" onclick="copyInput(${Number(index)},this)">复制</button><button class="mini" onclick="downloadInput(${Number(index)})">下载 JSON</button></h4>`
+  const note = context.kind === "partial" ? `缺少前序响应 ${context.missingResponseID ?? ""}，这里只显示已捕获部分。`
+    : context.kind === "reconstructed" ? `请求链 ${context.chain.map(value => "#" + value).join(" → ")}；由捕获的请求、响应重建客户端上下文。`
+    : context.kind === "translated" ? "实际发送给上游模型的转译后输入。" : "已捕获的客户端输入，指令可能在下面的 developer / user 消息中。"
+  html += `<p class="model-input-note">${escapeHtml(note)} 不含服务端额外处理，加密状态仅原样保留。</p><div class="model-input-body">`
+  const systemText = typeof context.system === "string" ? context.system : context.system == null ? "" : jsonText(context.system)
+  if (systemText) html += `<details class="input-message" open><summary>${context.format === "anthropic" ? "system" : "instructions"}</summary><pre>${escapeHtml(systemText)}</pre></details>`
+  const firstMessage = items.findIndex(item => item.type !== "additional_tools" && (item.type === "message" || item.role))
+  for (let n = 0; n < items.length; n++) {
+    const item = items[n]
+    const content = typeof item.content === "string" ? item.content : Array.isArray(item.content)
+      ? item.content.map(block => typeof block.text === "string" ? block.text : jsonText(block)).join("\n\n") : jsonText(item)
+    const title = item.type === "additional_tools" ? "工具定义（additional_tools）" : item.role ?? item.type ?? "item"
+    html += `<details class="input-message"${n === firstMessage && item.type !== "additional_tools" ? " open" : ""}><summary>${n + 1}. ${escapeHtml(title)}${item.name ? " · " + escapeHtml(item.name) : ""}</summary><pre>${escapeHtml(content)}</pre></details>`
+  }
+  html += `</div>${context.tools ? rawDetail("工具定义（完整）", context.tools) : ""}</section>`
+  return html
+}
+
 /* ═══════════ system prompt：复制 / 下载 / 原始-预览切换 ═══════════ */
 const sysTextCache = {}
+const modelInputCache = {}
+function copyInput(index, button) {
+  navigator.clipboard.writeText(jsonText(modelInputCache[index]))
+  button.textContent = "已复制"; setTimeout(() => { button.textContent = "复制" }, 1200)
+}
+function downloadInput(index) {
+  const blob = new Blob([jsonText(modelInputCache[index])], { type: "application/json;charset=utf-8" })
+  const link = document.createElement("a")
+  link.href = URL.createObjectURL(blob); link.download = `model-input-${index}.json`; link.click()
+  URL.revokeObjectURL(link.href)
+}
 function copySys(i, btn) {
   navigator.clipboard.writeText(sysTextCache[i] ?? "")
   btn.textContent = "已复制 ✓"; setTimeout(() => (btn.textContent = "复制"), 1200)
@@ -621,35 +784,26 @@ function toggleSys(i, btn) {
   md.innerHTML = miniMd(sysTextCache[i] ?? "")
   md.style.display = ""; pre.style.display = "none"; btn.textContent = "原始"
 }
-/* 极简 Markdown 渲染（预览用）：代码块/标题/列表/加粗/行内代码 */
-function miniMd(src) {
-  const inline = (t) => escapeHtml(t).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, "<code>$1</code>")
-  let html = "", inCode = false, inList = false, para = []
-  const flushPara = () => { if (para.length) { html += `<p>${para.map(inline).join("<br>")}</p>`; para = [] } }
-  const flushList = () => { if (inList) { html += "</ul>"; inList = false } }
-  for (const line of src.split("\n")) {
-    if (line.trimStart().startsWith("```")) { flushPara(); flushList(); html += inCode ? "</pre>" : `<pre class="mdcode">`; inCode = !inCode; continue }
-    if (inCode) { html += escapeHtml(line) + "\n"; continue }
-    const h = line.match(/^(#{1,6})\s+(.*)$/)
-    if (h) { flushPara(); flushList(); html += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`; continue }
-    if (/^\s*[-*]\s+/.test(line)) { flushPara(); if (!inList) { html += "<ul>"; inList = true } html += `<li>${inline(line.replace(/^\s*[-*]\s+/, ""))}</li>`; continue }
-    if (!line.trim()) { flushPara(); flushList(); continue }
-    para.push(line)
-  }
-  flushPara(); flushList()
-  if (inCode) html += "</pre>"
-  return html
+const miniMd = source => renderMarkdown(source)
+function setMarkdown(body, text) {
+  body.dataset.rawText = text
+  body.classList.add("markdown")
+  const paint = () => { body.innerHTML = renderMarkdown(body.dataset.rawText); body.dataset.paintPending = ""; scrollBottom() }
+  if (typeof requestAnimationFrame !== "function") return paint()
+  if (!body.dataset.paintPending) { body.dataset.paintPending = "1"; requestAnimationFrame(paint) }
 }
 
 /* ═══════════ 转写 ═══════════ */
 const transcript = document.getElementById("transcript")
 const bubbles = {}, toolCards = {}, partVocab = {}
+let followTranscript = true
+transcript.addEventListener("scroll", () => { followTranscript = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 72 })
 let currentSession = null
 const sessionParents = new Map(), pendingSessionEvents = [], pendingDeltas = new Map()
 const toolStates = new Map(), codexItems = new Map(), terminalSessions = new Set(), sessionErrors = new Map()
 const assistantSnapshots = new Map(), seenPartMarkers = new Set(), seenLlmRequests = new Set(), seenEventIDs = new Set()
 
-function scrollBottom() { transcript.scrollTop = transcript.scrollHeight }
+function scrollBottom() { if (followTranscript) transcript.scrollTop = transcript.scrollHeight }
 function sessionID(p) { return p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID ?? (!p.info?.role ? p.info?.id : undefined) }
 function knownSession(id) {
   const seen = new Set()
@@ -677,8 +831,8 @@ function addMsg(kind, who) {
   transcript.appendChild(div); scrollBottom()
   return div.querySelector(".body")
 }
-const addUser = (t) => addMsg("user", "你 · 提交内容（viz.run）").textContent = t
-const addInfo = (t) => addMsg("info", "harness").textContent = t
+const addUser = (t) => addMsg("user", "你").textContent = t
+const addInfo = (t) => addMsg("info", "运行信息").textContent = t
 const addError = (t) => addMsg("error", "错误").textContent = t
 
 function appendText(partID, delta, kind, child) {
@@ -687,25 +841,24 @@ function appendText(partID, delta, kind, child) {
   partVocab[partID] = kind
   let b = bubbles[partID]
   if (!b) {
-    const who = child ? "子代理 · assistant（子 session）"
-      : kind === "reasoning" ? "模型思考 · reasoning" : "助手 · assistant（llm.ts → streamText）"
+    const who = child ? "子代理" : kind === "reasoning" ? "思考摘要" : "助手"
     b = bubbles[partID] = addMsg((child ? "child " : "") + (kind === "reasoning" ? "reasoning" : "assistant"), who)
   }
-  b.textContent += delta; scrollBottom()
+  setMarkdown(b, (b.dataset.rawText ?? "") + delta); scrollBottom()
 }
 
 function toolCard(partID, tool, state, child) {
   let el = toolCards[partID]
   if (!el) {
-    el = addMsg((child ? "child " : "") + "tool", (child ? "子代理 · " : "") + "工具 part 状态（processor.ts:216/315/160）")
+    el = addMsg((child ? "child " : "") + "tool", (child ? "子代理 · " : "") + "工具调用")
     toolCards[partID] = el
   }
   const status = state?.status ?? "running"
   const statusCN = { pending: "待执行", running: "执行中", completed: "已完成", error: "失败" }[status] ?? status
   const statusClass = ["pending", "running", "completed", "error"].includes(status) ? status : ""
   let html = `<span class="toolname">${escapeHtml(tool ?? "?")}</span><span class="status ${statusClass}">${escapeHtml(statusCN)}</span>`
-  if (state?.title) html += ` <span style="color:var(--dim)">${escapeHtml(String(state.title))}</span>`
-  if (state?.input && Object.keys(state.input).length) html += `<pre>入参:\n${escapeHtml(JSON.stringify(state.input, null, 2))}</pre>`
+  if (state?.title) html += ` <span class="tool-title" title="${escapeHtml(String(state.title))}">${escapeHtml(String(state.title))}</span>`
+  if (state?.input && Object.keys(state.input).length) html += rawDetail("参数", state.input)
   if (status === "completed" && state?.output != null) html += rawDetail("结果（完整）", state.output)
   if (status === "error" && state?.error) html += `<pre>错误:\n${escapeHtml(String(state.error))}</pre>`
   el.innerHTML = html; scrollBottom()
@@ -763,9 +916,10 @@ let runState = "idle"
 function setRun(state) {
   runState = state
   runBadge.className = "badge" + (state === "busy" ? " busy" : "")
-  runBadge.textContent = { idle: "空闲", busy: "运行中…", ended: "已结束（非成功判定）", failed: "失败", interrupted: "已中断" }[state] ?? state
+  runBadge.textContent = { idle: "就绪", busy: "运行中", ended: "已结束", failed: "失败", interrupted: "已中断" }[state] ?? state
   runBadge.style.color = state === "failed" ? "var(--red)" : state === "interrupted" ? "var(--orange)" : ""
   document.getElementById("abortBtn").disabled = state !== "busy"
+  document.getElementById("abortBtn").hidden = state !== "busy"
   document.getElementById("runBtn").disabled = state === "busy"
 }
 
@@ -782,7 +936,7 @@ function endSession(p, child) {
   const interrupted = final?.error?.name === "MessageAbortedError" || error?.name === "MessageAbortedError" || runState === "interrupted"
    if (!child) setRun(interrupted ? "interrupted" : final?.error || final?.finish === "error" || error?.name === "SubmissionError" ? "failed" : "ended")
   pulse(child ? "sub" : "done", 4000)
-  addRecord(child ? "sub" : "done", "会话 idle（已结束，非成功判定）", "session.status idle 为 canonical；session.idle 冗余事件不重复终态。退出路径未直接观测，prune 是 forked 工作。", "json", { status: p, lastAssistant: final, errorEvidence: error })
+  addRecord(child ? "sub" : "done", "会话已结束", "session.status idle 为 canonical；session.idle 冗余事件不重复终态。退出路径未直接观测，prune 是 forked 工作。", "json", { status: p, lastAssistant: final, errorEvidence: error })
 }
 
 function handleEvent(evt) {
@@ -960,7 +1114,7 @@ function processEvent(evt) {
         const snapshot = part.text ?? ""
         const text = buffered && !snapshot.endsWith(buffered) ? snapshot + buffered : snapshot
         appendText(key, text, part.type, child)
-        if (bubbles[key]) bubbles[key].textContent = text
+        if (bubbles[key]) setMarkdown(bubbles[key], text)
       } else if (part.type === "step-start") {
         pulse(child ? "sub" : "loop", 2000)
       }
@@ -1028,13 +1182,17 @@ function codexItem(item, done) {
   } else updateRec(node, r => (r.data?.id ?? r.data?.call_id) === key, item)
   let b = toolCards["cx-" + key]
   if (!b) b = toolCards["cx-" + key] = addMsg(textItem ? item.type === "reasoning" ? "reasoning" : "assistant" : errorItem ? "error" : "tool",
-    textItem ? item.type === "reasoning" ? "reasoning 摘要（非完整内部推理）" : "agent_message（不一定是最终回答）" : `exec item · ${escapeHtml(item.type)}`)
-  if (textItem) b.textContent = item.text ?? ""
+    textItem ? item.type === "reasoning" ? "思考摘要" : "助手" : "工具调用")
+  if (textItem) setMarkdown(b, item.text ?? "")
   else if (errorItem) b.innerHTML = `<pre>${escapeHtml(item.message ?? "错误 item")}</pre>` + rawDetail("错误 item（完整；不单独推定 turn 终态）", item)
   else {
-    const name = item.type === "command_execution" ? "shell" : item.type === "mcp_tool_call" ? `${item.server}/${item.tool}` : item.type === "collab_tool_call" ? `collaboration · ${item.tool ?? "?"}` : item.type
+    const name = item.type === "command_execution" ? "执行命令" : item.type === "file_change" ? "修改文件" : item.type === "mcp_tool_call" ? `${item.server}/${item.tool}` : item.type === "collab_tool_call" ? `子代理 · ${item.tool ?? "?"}` : item.type === "web_search" ? "搜索网页" : item.type === "todo_list" ? "计划" : item.type
     const status = item.status ?? (done ? "completed" : "in_progress")
-    b.innerHTML = `<span class="toolname">${escapeHtml(name)}</span><span class="status ${status === "completed" ? "completed" : status === "in_progress" ? "running" : "error"}">${escapeHtml(status)}</span>` + rawDetail("原始 item（完整，含 MCP result / collaboration 元数据）", item)
+    const statusText = { completed: "已完成", in_progress: "执行中", failed: "失败", declined: "已拒绝" }[status] ?? status
+    const summary = item.type === "command_execution" ? item.command
+      : item.type === "file_change" ? (item.changes ?? []).map(change => change.path).join("\n") : null
+    b.innerHTML = `<span class="toolname">${escapeHtml(name)}</span><span class="status ${status === "completed" ? "completed" : status === "in_progress" ? "running" : "error"}">${escapeHtml(statusText)}</span>`
+      + (summary ? `<pre>${escapeHtml(summary)}</pre>` : "") + rawDetail("调用详情", item)
   }
   pulse(node); scrollBottom()
 }
@@ -1058,7 +1216,6 @@ function handleCodexEvent(evt) {
       break
     case "codex.proc.start":
       setRun("busy")
-      addInfo("启动 codex exec 进程；实际启动属性见原始事件。exec 默认审批 Never（exec/lib.rs:571），存在配置例外（:758）。")
       pulse("c-server")
       addRecord("c-server", "exec 进程启动", "启动边界报告，不是 run_turn 函数 trace。", "json", p)
       log(type, p.cmd ?? "spawn"); break
@@ -1082,7 +1239,6 @@ function handleCodexEvent(evt) {
       pulse("c-done", 4000); bump("c-done")
       addRecord("c-done", "turn.completed（完成报告）",
         "直接 turn 完成报告，不反推 needs_follow_up、stop hook 或压缩分支，也不证明任务正确。", "json", p)
-      addInfo("turn.completed（非任务成功判定）· usage=" + JSON.stringify(p.usage ?? {}))
       log(type, "turn 完成", "ok"); break
     case "codex.turn.failed":
       setRun(p.aborted || p.error?.name === "MessageAbortedError" || runState === "interrupted" ? "interrupted" : "failed")
@@ -1110,11 +1266,11 @@ const SOURCE_PINS = {
 }
 function sourceDoc(h, explanation, anchors) {
   const pin = SOURCE_PINS[h]
-  return `<h3>源码机制（非运行 trace）</h3><p>${explanation}</p><h3>审计源码锚点</h3><p><code>${pin.tag} · ${pin.commit}</code></p>` + anchors.map(([file, symbol, lines]) => {
+  return `<h3 title="基于固定版本源码，不代表本次实际执行">机制说明</h3><p>${explanation}</p><details class="raw"><summary>源码定位 · ${pin.tag}</summary><p><code title="${pin.commit}">${pin.commit.slice(0, 10)}</code></p>` + anchors.map(([file, symbol, lines]) => {
     const range = String(lines).split("-")
     const url = `https://github.com/${pin.repo}/blob/${pin.commit}/${pin.root}${file}#L${range[0]}${range[1] ? "-L" + range[1] : ""}`
     return `<p><a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(file)}:${lines} · ${escapeHtml(symbol)}</a></p>`
-  }).join("") + `<p class="evidence">直接事件 / API 边界捕获 / 解析推断。无记录仅表示未直接观测。</p>`
+  }).join("") + `</details>`
 }
 const ocDoc = (text, anchors) => sourceDoc("opencode", text, anchors)
 const cxDoc = (text, anchors) => sourceDoc("codex", text, anchors)
@@ -1174,6 +1330,7 @@ function connect() {
 
 /* 清空界面状态（运行新任务 / 切换 harness 共用） */
 function resetUI() {
+  followTranscript = true
   transcript.innerHTML = ""
   eventlog.innerHTML = ""; logN = 0; logCount.textContent = "(0)"
   Object.keys(bubbles).forEach(k => delete bubbles[k])
@@ -1188,6 +1345,7 @@ function resetUI() {
   Object.values(activeTimers).forEach(clearTimeout)
   lastFinishInfo = null
   Object.keys(sysTextCache).forEach(k => delete sysTextCache[k])
+  Object.keys(modelInputCache).forEach(k => delete modelInputCache[k])
   llmCallCount = 0; llmBadge.textContent = "捕获请求: 0"
   document.querySelectorAll(".cnt").forEach(c => { c.style.display = "none"; c.textContent = "0" })
   document.querySelectorAll(".fnode,.fdia").forEach(e => { e.classList.remove("unread", "active") })
@@ -1203,17 +1361,15 @@ function switchHarness(h) {
   document.querySelectorAll(".hbtn").forEach(b => b.classList.toggle("on", b.dataset.h === h))
   document.getElementById("flowOpencode").style.display = h === "opencode" ? "" : "none"
   document.getElementById("flowCodex").style.display = h === "codex" ? "" : "none"
-  document.getElementById("appTitle").textContent = (h === "codex" ? "codex" : "opencode") + " Harness 实时可视化"
   document.getElementById("modelSel").style.display = h === "codex" ? "none" : ""
   document.getElementById("codexModelBadge").style.display = h === "codex" ? "" : "none"
-  document.getElementById("prompt").placeholder = h === "codex"
-    ? "输入提示词，驱动真实 codex exec…（Ctrl+Enter 运行）"
-    : "输入提示词，驱动真实 opencode harness…（Ctrl+Enter 运行）"
+  document.getElementById("prompt").placeholder = "输入任务，Enter 运行"
   resetUI()
   currentSession = rootByHarness[h]
   if (currentSession) document.getElementById("sessionLabel").textContent = "会话 " + currentSession.slice(-8)
   for (const evt of eventsByHarness[h]) handleEvent(evt)
   selectNode(h === "codex" ? "c-llm" : "llm")
+  updateModelInfo()
 }
 document.querySelectorAll(".hbtn").forEach(b => b.onclick = () => switchHarness(b.dataset.h))
 
@@ -1241,7 +1397,7 @@ async function run() {
 }
 
 document.getElementById("runBtn").onclick = run
-document.getElementById("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) run() })
+document.getElementById("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); run() } })
 document.getElementById("demoBtn").onclick = () => {
   document.getElementById("prompt").value = harness === "codex"
     ? "请列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome，最后告诉我改了什么。"
@@ -1263,43 +1419,63 @@ document.getElementById("abortBtn").onclick = async () => {
 /* ═══════════ 流程图缩放 & 平移 ═══════════ */
 const flowWrap = document.getElementById("flowWrap")
 const flowCanvas = document.getElementById("flowCanvas")
-let view = { k: 1, x: 0, y: 0 }
+let view = { k: 1, x: 0, y: 16, auto: true, whole: false }
 const applyView = () => { flowCanvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})` }
-flowWrap.addEventListener("wheel", (e) => {
-  if (window.matchMedia("(max-width: 1200px)").matches) return
-  e.preventDefault()
-  const r = flowWrap.getBoundingClientRect()
-  const cx = e.clientX - r.left, cy = e.clientY - r.top
-  const k2 = Math.min(Math.max(view.k * (e.deltaY < 0 ? 1.12 : 0.89), 0.35), 2.5)
-  view.x = cx - (cx - view.x) * (k2 / view.k)   // 以光标为中心缩放
-  view.y = cy - (cy - view.y) * (k2 / view.k)
-  view.k = k2
+function fitFlow(whole = false) {
+  if (!flowWrap.clientWidth || !flowWrap.clientHeight) return
+  const width = flowWrap.clientWidth - 32, height = flowWrap.clientHeight - 32
+  const k = Math.min(1, width / 700, whole ? height / 1070 : 1)
+  view = { k, x: (flowWrap.clientWidth - 700 * k) / 2, y: whole ? (flowWrap.clientHeight - 1070 * k) / 2 : 16, auto: true, whole }
   applyView()
+}
+function zoomFlow(factor, cx = flowWrap.clientWidth / 2, cy = flowWrap.clientHeight / 2) {
+  const k = Math.min(Math.max(view.k * factor, .25), 2.5)
+  view.x = cx - (cx - view.x) * (k / view.k)
+  view.y = cy - (cy - view.y) * (k / view.k)
+  view.k = k; view.auto = false; applyView()
+}
+flowWrap.title = "滚轮平移 · Ctrl+滚轮缩放 · 拖动平移"
+flowWrap.addEventListener("wheel", (e) => {
+  e.preventDefault()
+  if (e.ctrlKey || e.metaKey) {
+    const r = flowWrap.getBoundingClientRect()
+    zoomFlow(e.deltaY < 0 ? 1.12 : .89, e.clientX - r.left, e.clientY - r.top)
+  } else { view.y -= e.deltaY; view.x -= e.deltaX; view.auto = false; applyView() }
 }, { passive: false })
-flowWrap.addEventListener("mousedown", (e) => {
-  if (window.matchMedia("(max-width: 1200px)").matches) return
+flowWrap.style.touchAction = "none"
+flowWrap.addEventListener("pointerdown", (e) => {
   if (e.target.closest(".fnode,.fdia")) return   // 节点上按下不拖动，保留点击
   e.preventDefault()
   flowWrap.classList.add("panning")
+  view.auto = false
+  flowWrap.setPointerCapture(e.pointerId)
   const sx = e.clientX - view.x, sy = e.clientY - view.y
   const mv = (ev) => { view.x = ev.clientX - sx; view.y = ev.clientY - sy; applyView() }
-  const up = () => { flowWrap.classList.remove("panning"); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up) }
-  window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up)
+  const up = () => { flowWrap.classList.remove("panning"); window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up) }
+  window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up)
 })
-document.getElementById("flowReset").onclick = () => { view = { k: 1, x: 0, y: 0 }; applyView() }
+document.getElementById("flowReset").onclick = () => fitFlow(true)
+document.getElementById("flowZoomIn").onclick = () => zoomFlow(1.2)
+document.getElementById("flowZoomOut").onclick = () => zoomFlow(1 / 1.2)
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(() => { if (view.auto) fitFlow(view.whole) }).observe(flowWrap)
 
 /* ═══════════ 三栏拖拽调宽 ═══════════ */
-function makeResizable(handleId, cssVar, invert) {
+function makeResizable(handleId, leftIds, rightIds) {
   const handle = document.getElementById(handleId)
   handle.addEventListener("mousedown", (e) => {
+    const left = leftIds.map(id => document.getElementById(id)).find(el => !el.hidden)
+    const right = rightIds.map(id => document.getElementById(id)).find(el => !el.hidden)
+    if (!left || !right) return
     e.preventDefault()
     handle.classList.add("dragging"); document.body.classList.add("resizing")
     const startX = e.clientX
-    const startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue(cssVar)) || 0
+    const width = left.getBoundingClientRect().width + right.getBoundingClientRect().width
+    const startW = left.getBoundingClientRect().width
+    const widths = [...document.querySelectorAll(".workspace-panel")].filter(el => !el.hidden).map(el => [el, el.getBoundingClientRect().width])
+    for (const [element, size] of widths) element.style.flexGrow = String(size)
     const onMove = (ev) => {
-      const dx = ev.clientX - startX
-      const w = Math.min(Math.max(startW + (invert ? -dx : dx), 300), Math.floor(window.innerWidth * 0.55))
-      document.documentElement.style.setProperty(cssVar, w + "px")
+      const w = Math.min(Math.max(startW + ev.clientX - startX, 240), width - 240)
+      left.style.flexGrow = String(w); right.style.flexGrow = String(width - w)
     }
     const onUp = () => {
       handle.classList.remove("dragging"); document.body.classList.remove("resizing")
@@ -1308,18 +1484,20 @@ function makeResizable(handleId, cssVar, invert) {
     window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp)
   })
 }
-makeResizable("rz1", "--w-left", false)
-makeResizable("rz2", "--w-right", true)
+makeResizable("rz1", ["colFlow"], ["colTx", "colLlm"])
+makeResizable("rz2", ["colTx"], ["colLlm"])
 
 async function init() {
+  restoreLayout()
   connect() // Buffer live events before loading snapshots, avoiding a replay/subscription gap.
   const status = await (await fetch("/api/status")).json()
-  const captureSource = status.codexCaptureSource ?? "来源未标注"
-  document.getElementById("codexModelBadge").textContent = "模型: " + (status.codexModel ?? "?") + (status.codexCapture ? `（捕获: ${captureSource}）` : "（未启用捕获）")
+  statusSnapshot = status
+  document.getElementById("codexModelBadge").textContent = status.codexModel ?? "—"
   document.getElementById("codexModelBadge").title = jsonText({ codexModel: status.codexModel, codexCapture: status.codexCapture, codexCaptureSource: status.codexCaptureSource })
-  if (status.versions) document.getElementById("verBadge").textContent = `opencode ${status.versions.opencode ?? "?"} · codex ${status.versions.codex ?? "?"}`
+  if (status.versions) document.getElementById("verBadge").textContent = `Codex ${(status.versions.codex ?? "?").replace(/^codex-cli\s+/, "")} · OpenCode ${status.versions.opencode ?? "?"}`
   document.getElementById("verBadge").title = jsonText({ versions: status.versions, sourceLock: status.sourceLock })
-  document.getElementById("evidenceBanner").innerHTML += rawDetail("运行 sourceLock / 审计固定版本（机制不等于运行证据）", { sourceLock: status.sourceLock ?? "服务未提供", auditedPins: SOURCE_PINS })
+  document.getElementById("sourceInfo").textContent = jsonText(status.sourceLock ?? SOURCE_PINS)
+  document.getElementById("workDirectory").textContent = status.targetProject ?? "—"
   const { models } = await (await fetch("/api/models")).json()
   const sel = document.getElementById("modelSel")
   for (const m of models) {
@@ -1327,6 +1505,7 @@ async function init() {
     if (m.value === status.ocModel) o.selected = true
     sel.appendChild(o)
   }
+  sel.onchange = updateModelInfo
   /* 刷新恢复：回放服务端内存里的上次运行事件（重启 server 后即为空） */
   try {
     const last = await (await fetch("/api/last-run?harness=opencode")).json()
