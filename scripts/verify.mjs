@@ -19,7 +19,8 @@ const results = { checkedAt: new Date().toISOString(), marker, target, checks: [
 let proc, log = ""
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function api(route, body) {
-  const response = await fetch(base + route, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  const response = await fetch(base + route, { signal: AbortSignal.timeout(route === "/api/run" ? 120000 : 10000),
+    ...(body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })
   const data = await response.json()
   if (!response.ok) throw new Error(`${route}: ${response.status} ${JSON.stringify(data)}`)
   return data
@@ -78,6 +79,11 @@ async function run(harness, filename, reject = false) {
     throw new Error(`${harness}: task timeout (300 seconds)`)
   }
   const calls = (await api("/api/llm-calls")).calls.filter(call => call.harness === harness)
+  for (const call of calls) {
+    assert.equal(typeof call.requestRaw, "string", "Original request text must be captured")
+    assert.deepEqual(JSON.parse(call.requestRaw), call.request)
+    if (call.anthropicRequest) assert.deepEqual(JSON.parse(call.upstreamRequestRaw), call.anthropicRequest)
+  }
   await writeFile(path.join(output, `${harness}-${filename}-events.json`), JSON.stringify(run, null, 2))
   await writeFile(path.join(output, `${harness}-${filename}-calls.json`), JSON.stringify(calls, null, 2))
   if (reject) {
@@ -110,10 +116,47 @@ async function run(harness, filename, reject = false) {
       return outputs.some(item => (item.call_id ?? item.tool_use_id) === tool.callID && JSON.stringify(item).includes(marker))
     })))
     assert(linkedFeedback, "Tool-read marker must be returned to a later request under the same call ID")
+    // 模板预览：含工具结果回传的末次请求经固定模板渲染后仍须携带 marker。
+    const preview = await api(`/api/template-preview?index=${calls.at(-1).index}&template=qwen38`)
+    assert(preview.ok, "Template preview must render a captured request")
+    assert(preview.text.includes(marker), "Rendered preview must keep the tool-read marker")
+    if (harness === "codex" && calls.at(-1).modelInput?.format === "responses") assert.equal(preview.sourceFormat, "responses", "Preview must identify the captured input format")
+    await writeFile(path.join(output, `${harness}-${filename}-preview-qwen38.txt`), preview.text)
   }
   return { harness, filename, rejected: reject, capturedCalls: calls.length, permissionsReplied: replied.size,
     sources: [...new Set(calls.map(call => call.source))], eventCount: run.events.length, configuration: run.configuration,
     terminalEvents: run.events.filter(event => ["codex.turn.completed", "codex.turn.failed", "codex.proc.exit", "session.error"].includes(event.type)).map(event => ({ type: event.type, properties: event.properties })) }
+}
+// 真实问答任务（不修改文件）：对捕获请求渲染三种固定模板并保存产物。
+async function runArticleTask() {
+  const prompt = "介绍 unrolling-the-codex-agent-loop 资料：用三点说明这篇 OpenAI 文章讲了什么。不要修改任何文件。"
+  await api("/api/run", { harness: "opencode", prompt })
+  let run
+  for (let n = 0; n < 600; n++) {
+    run = await api("/api/last-run?harness=opencode")
+    if (run.active === false) break
+    await delay(500)
+  }
+  if (run.active) {
+    await api("/api/abort", { harness: "opencode", sessionID: run.sessionID })
+    throw new Error("opencode: article task timeout (300 seconds)")
+  }
+  assert(run.events.some(event => event.type === "session.status" && event.properties.status?.type === "idle"), "Canonical idle status required")
+  const calls = (await api("/api/llm-calls")).calls.filter(call => call.harness === "opencode")
+  assert(calls.length > 0, "Client request capture must be present")
+  const templates = (await api("/api/templates")).templates
+  assert.deepEqual(templates.map(t => t.id), ["qwen38", "glm53", "kimi-k3"])
+  const previews = {}
+  for (const t of templates) {
+    const result = await api(`/api/template-preview?index=${calls.at(-1).index}&template=${t.id}`)
+    assert(result.ok)
+    assert(result.text.includes("unrolling-the-codex-agent-loop"), "Rendered preview must contain the task prompt")
+    assert.equal(result.sourceFormat, "anthropic")
+    previews[t.id] = { chars: result.chars, revision: result.template.revision }
+    await writeFile(path.join(output, `template-preview-${t.id}.txt`), result.text)
+  }
+  assert(previews.qwen38 && previews.glm53 && previews["kimi-k3"])
+  return { harness: "opencode", task: "unrolling-the-codex-agent-loop 介绍", capturedCalls: calls.length, previews }
 }
 try {
   results.status = await start(false, smokeOnly)
@@ -143,6 +186,8 @@ try {
     try { results.checks.push({ name, passed: true, ...await run(harness, filename, reject) }) }
     catch (err) { results.checks.push({ name, passed: false, error: err.message }) }
   }
+  try { results.checks.push({ name: "Template preview on a real OpenCode Q&A task", passed: true, ...await runArticleTask() }) }
+  catch (err) { results.checks.push({ name: "Template preview on a real OpenCode Q&A task", passed: false, error: err.message }) }
   await stop()
   await delay(500)
   if (process.env.MINIMAX_API_KEY) {

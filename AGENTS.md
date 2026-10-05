@@ -16,3 +16,6 @@
 - 仅顶部工具栏固定显示；面板开关只改变视图，不清空任务或事件。输入框保持单行，不自动增高。
 - Markdown 使用本地 `public/vendor` 中的 Marked / DOMPurify；不要把模型输出直接写入 innerHTML。更新依赖用 `node scripts/vendor-markdown.mjs` 并保留许可证。
 - 模型输入重建只关联同一 run / thread 的 previous_response_id 请求链，原始载荷不修改。缺少前序响应标为不完整，不从时间顺序猜补；转译模式优先展示实际发给上游的输入。
+- 请求下载保留捕获的原始文本，不下载分析对象；代理模式必须与转发 body 一致，转译模式必须与上游 body 一致。原生 trace 的记录边界单独标明，不能称为服务端最终 prompt 或全部网络报文。
+- 模板预览（`src/template-preview.mjs`）用固定版本的公开模板本地离线渲染捕获的请求 JSON，不是服务端实际 prompt，不含 token IDs；模板文件 vendored 在 `src/templates/`（来源 URL+revision+sha256 锁定，加载时校验哈希，不联网），渲染引擎是 vendored `@huggingface/jinja`（`src/vendor/jinja/`，更新时保留 LICENSE）。Kimi K3 无独立 Jinja 模板，其 XTML 拼接是官方 `encoding_k3.py` 的等价移植；默认界面仅保留操作与渲染文本，来源、版本和去重的实际转换记录放在折叠的「渲染详情」中。已捕获的 Responses 请求内容是已知的，不能与不可见的服务端内部编码混淆。渲染基准在 `tests/fixtures/template-preview/`（由固定上游模板经 Python 生成，provenance 见其 meta.json），改动渲染逻辑必须重跑 golden 测试。
+- 格式化 JSON 下载只调整空白，保留数字字面量、转义和字段顺序；原文下载不格式化。OpenCode 转写必须按 messageID 对应角色分流，不把 user part 再显示为助手，不用文本相同过滤真实助手输出。

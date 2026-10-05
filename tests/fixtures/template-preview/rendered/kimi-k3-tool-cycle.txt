@@ -1,0 +1,7 @@
+<|open|>message role="system" type="tool-declare"<|sep|># Tools
+Here are the available tools, described in JSONSchema.
+
+```json
+[{"function":{"description":"Read a text file.","name":"read","parameters":{"properties":{"filePath":{"type":"string"},"limit":{"type":"integer"}},"required":["filePath"],"type":"object"}},"type":"function"}]
+```<|close|>message<|sep|><|end_of_msg|><|open|>message role="system"<|sep|>你是 OpenCode 编程助手。<|close|>message<|sep|><|end_of_msg|><|open|>message role="user"<|sep|>介绍 unrolling-the-codex-agent-loop 资料：说明 Responses API 请求里有哪些字段。<|close|>message<|sep|><|end_of_msg|><|open|>message role="assistant"<|sep|><|open|>think<|sep|>需要先读取本地笔记文件。<|close|>think<|sep|><|open|>response<|sep|>我先读取资料文件。<|close|>response<|sep|><|open|>tools<|sep|><|open|>call tool="read" index="1"<|sep|><|open|>argument key="filePath" type="string"<|sep|>notes/unrolling-the-codex-agent-loop.md<|close|>argument<|sep|><|open|>argument key="limit" type="number"<|sep|>40<|close|>argument<|sep|><|close|>call<|sep|><|close|>tools<|sep|><|close|>message<|sep|><|end_of_msg|><|open|>message role="tool" tool="read" index="1"<|sep|># unrolling-the-codex-agent-loop
+文章介绍 Codex agent loop。<|close|>message<|sep|><|end_of_msg|><|open|>message role="assistant"<|sep|><|open|>think<|sep|>

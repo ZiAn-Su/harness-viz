@@ -1,0 +1,71 @@
+<|im_start|>system
+Reasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.
+
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "read", "description": "Read a text file.", "parameters": {"type": "object", "properties": {"filePath": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["filePath"]}}}
+{"type": "function", "function": {"name": "list", "description": "List directory entries.", "parameters": {"type": "object", "properties": {"dirPath": {"type": "string"}}, "required": ["dirPath"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+你是 OpenCode 编程助手。<|im_end|>
+<|im_start|>user
+介绍 unrolling-the-codex-agent-loop 资料：说明 Responses API 请求里有哪些字段。<|im_end|>
+<|im_start|>assistant
+<think>
+先读文件再列目录。
+</think>
+
+<tool_call>
+<function=read>
+<parameter=filePath>
+notes/unrolling-the-codex-agent-loop.md
+</parameter>
+<parameter=limit>
+40
+</parameter>
+</function>
+</tool_call>
+<tool_call>
+<function=list>
+<parameter=dirPath>
+notes
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+- a.md
+- b.md
+</tool_response>
+<tool_response>
+# unrolling-the-codex-agent-loop
+文章介绍 Codex agent loop。
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>

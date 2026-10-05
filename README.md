@@ -36,7 +36,9 @@ npm start
 - **实时转写**：助手输出、工具调用、结果和权限询问。
 - **上下文详情**：直接查看客户端请求、工具定义和响应，并区分证据来源。
 
-查看模型输入：点击流程图中的「LLM 采样／调用」，展开请求记录。Codex 增量请求会按已捕获的响应链重建上下文；可复制或下载。它不是服务端最终加工后的提示词。
+查看模型请求：点击「LLM 采样／调用」，展开请求记录。「下载 JSON」带缩进、只调整空白；「下载原文」保留捕获文本用于核验。两者不加入重建历史或分析字段；第三方模式下载发给上游的请求体。Codex 原生 trace 是 CLI 请求记录，不是网络抓包。
+
+「模板预览」把已捕获的请求 JSON 按所选公开模板拼接成送入 tokenizer 前的文本，可选 Qwen3.8（开放版）、GLM5.3、Kimi K3（官方 XTML 编码器的等价移植），可复制、下载。模板文件随仓库固定在 [`src/templates/`](src/templates)（来源 URL+提交哈希+sha256 锁定，无需联网）；渲染由本地 `@huggingface/jinja`（vendored 于 `src/vendor/jinja/`）完成。来源、版本和具体字段转换可展开「渲染详情」查看。
 
 顶部可独立开关输入框、流程图、转写和详情；隐藏面板后，其余面板自动扩展。转写支持 Markdown。
 
@@ -70,4 +72,4 @@ Codex 也支持第三方模型：将 `codex.useDefaultModel` 设为 `false`，`c
 
 `npm test` 运行无模型回归测试；`npm run test:integration` 使用临时项目调用真实模型；`npm run test:browser -- ".runtime/verification/<run>"` 检查记录回放。CLI 版本和源码固定在 [`src/versions.json`](src/versions.json)，详细定位在界面节点说明中。
 
-[MIT License](LICENSE)
+[MIT License](LICENSE)。第三方模板及编码器沿用 [`src/templates/`](src/templates) 中保留的上游许可证；Jinja 引擎许可证见 [`src/vendor/jinja/LICENSE`](src/vendor/jinja/LICENSE)。

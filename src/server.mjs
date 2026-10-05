@@ -12,6 +12,7 @@ import { readFile, appendFile, writeFile, mkdir } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import os from "node:os"
 import { readTraceEvents, summarizeResponse, requestTools, withModelInputs } from "./trace.mjs"
+import { listTemplates, renderTemplatePreview } from "./template-preview.mjs"
 import { resolveCodexLauncher } from "./cli.mjs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -137,7 +138,7 @@ function broadcast(payload) {
 async function startOpencode() {
   let existing
   try {
-    existing = await oc("/session/status")
+    existing = await oc("/global/health", { signal: AbortSignal.timeout(5000) })
   } catch {}
   if (existing) throw new Error(`Port ${OC_PORT} is occupied; refusing to reuse an unverified OpenCode server`)
   const home = path.join(RUNTIME_DIR, "opencode-home")
@@ -201,8 +202,11 @@ async function waitReady(timeoutMs = 90_000) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await oc("/session/status")
-      if (res.ok) { ocReady = true; console.log("[viz] opencode serve 就绪"); return }
+      const res = await oc("/global/health", { signal: AbortSignal.timeout(5000) })
+      if (res.ok) {
+        const health = await res.json()
+        if (health.healthy && health.version === SOURCE_LOCK.opencode.version) { ocReady = true; console.log("[viz] opencode serve 就绪"); return }
+      }
     } catch {}
     await new Promise((r) => setTimeout(r, 400))
   }
@@ -281,6 +285,7 @@ const llmProxy = createServer(async (req, res) => {
     parentSessionID: req.headers["x-opencode-parent-session-id"] ?? null,
     model: bodyJson?.model ?? null,
     request: bodyJson,          // {model, system, messages[], tools[], max_tokens, stream...}
+    requestRaw: raw.toString("utf8"),
     response: null,
     error: null,
     ms: null,
@@ -464,7 +469,7 @@ function captureCodexTrace(root, run) {
   const cursors = new Map(), calls = new Map()
   let pending = Promise.resolve(), warned = false
   const pull = () => pending = pending.then(async () => {
-    for (const { bundle, event, payloads } of await readTraceEvents(root, cursors)) {
+    for (const { bundle, event, payloads, rawPayloads } of await readTraceEvents(root, cursors)) {
       const p = event.payload
       const evidence = { bundle, event }
       const base = { harness: "codex", runID: run.runID, source: "native-trace" }
@@ -473,7 +478,7 @@ function captureCodexTrace(root, run) {
         const r = request?.request ?? request ?? {}
         const call = { index: ++llmIndex, harness: "codex", runID: run.runID, source: "native-trace", model: p.model,
           sessionID: p.thread_id, turnID: p.codex_turn_id, inferenceCallID: p.inference_call_id,
-          startedAt: event.wall_time_unix_ms, request, response: null, error: null, trace: evidence }
+          startedAt: event.wall_time_unix_ms, request, requestRaw: rawPayloads.request_payload, response: null, error: null, trace: evidence }
         calls.set(p.inference_call_id, call)
         llmCalls.push(call)
         broadcast({ ...base, id: `trace-${bundle}-${event.seq}`, type: "llm.request", properties: {
@@ -580,6 +585,7 @@ async function handleCodexResponses(req, res, raw, bodyJson, startedAt, index) {
     model: bodyJson?.model ?? null,
     source: "translation-proxy", runID: runs.codex.runID,
     request: bodyJson,       // Responses 原始请求（完整捕获：instructions/input/tools）
+    requestRaw: raw.toString("utf8"),
     anthropicRequest: null,  // 翻译后的 Anthropic 请求（供对照）
     response: null, error: null, ms: null,
   }
@@ -603,6 +609,7 @@ async function handleCodexResponses(req, res, raw, bodyJson, startedAt, index) {
   try {
     const anthropicReq = responsesToAnthropic(bodyJson ?? {}, customTools)
     call.anthropicRequest = anthropicReq
+    call.upstreamRequestRaw = JSON.stringify(anthropicReq)
     call.translationWarnings = [
       "Responses message roles other than assistant become Anthropic user; instructions become system.",
       "Reasoning items/settings are omitted; non-text input becomes a type placeholder.",
@@ -619,7 +626,7 @@ async function handleCodexResponses(req, res, raw, bodyJson, startedAt, index) {
         Authorization: `Bearer ${KEY}`,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify(anthropicReq),
+      body: call.upstreamRequestRaw,
     })
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => "")
@@ -778,6 +785,28 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/llm-calls") {
       json(res, { calls: withModelInputs(llmCalls) })
+      return
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/templates") {
+      json(res, { templates: listTemplates() })
+      return
+    }
+
+    /* 模板预览：本地离线渲染，不是服务端实际 prompt；模板文件固定在 src/templates/。 */
+    if (req.method === "GET" && url.pathname === "/api/template-preview") {
+      const index = Number(url.searchParams.get("index"))
+      const templateId = url.searchParams.get("template") ?? ""
+      if (!Number.isInteger(index)) return json(res, { error: "缺少有效的 index" }, 400)
+      if (!listTemplates().some(t => t.id === templateId)) return json(res, { error: `未知模板: ${templateId}` }, 400)
+      const call = withModelInputs(llmCalls).find(c => c.index === index)
+      if (!call) return json(res, { error: `未找到调用 #${index}` }, 404)
+      try {
+        const result = await renderTemplatePreview({ modelInput: call.modelInput, templateId })
+        json(res, { ok: true, index, ...result })
+      } catch (err) {
+        json(res, { error: String(err?.message ?? err) }, 502)
+      }
       return
     }
 

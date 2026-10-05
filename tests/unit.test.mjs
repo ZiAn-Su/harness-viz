@@ -138,7 +138,8 @@ test("native trace reader waits for complete lines, deduplicates, and reads exac
     const bundle = path.join(root, "trace-fixture")
     await mkdir(path.join(bundle, "payloads"), { recursive: true })
     const request = { model: "fixture", input: [{ type: "message", content: [{ text: "context-marker" }] }] }
-    await writeFile(path.join(bundle, "payloads", "request.json"), JSON.stringify(request))
+    const originalText = JSON.stringify(request, null, 4) + "\n"
+    await writeFile(path.join(bundle, "payloads", "request.json"), originalText)
     const event = { seq: 1, payload: { type: "inference_started", request_payload: { path: "payloads/request.json" } } }
     const log = path.join(bundle, "trace.jsonl"), cursors = new Map()
     await writeFile(log, JSON.stringify(event))
@@ -146,6 +147,7 @@ test("native trace reader waits for complete lines, deduplicates, and reads exac
     await writeFile(log, JSON.stringify(event) + "\n")
     const items = await readTraceEvents(root, cursors)
     assert.deepEqual(items[0].payloads.request_payload, request)
+    assert.equal(items[0].rawPayloads.request_payload, originalText)
     assert.deepEqual(items[0].event, event)
     assert.deepEqual(await readTraceEvents(root, cursors), [])
     await writeFile(log, JSON.stringify(event) + '\n{"seq":2,"payload":{"request_payload":{"path":"../../secret"}}}\n')

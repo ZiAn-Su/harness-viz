@@ -6,6 +6,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import assert from "node:assert/strict"
 import { withModelInputs } from "../src/trace.mjs"
+import { listTemplates, renderTemplatePreview } from "../src/template-preview.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 if (!process.argv[2]) throw new Error("Usage: node browser-check.mjs <verification-directory>")
@@ -54,9 +55,21 @@ const server = createServer(async (req, res) => {
     publish(0)
     return
   }
+  if (url.pathname === "/api/template-preview" && req.method === "GET") {
+    const index = Number(url.searchParams.get("index"))
+    const call = withModelInputs(calls).find(item => item.index === index)
+    res.setHeader("Content-Type", "application/json")
+    if (!call) { res.statusCode = 404; res.end(JSON.stringify({ error: "not found" })); return }
+    try {
+      const result = await renderTemplatePreview({ modelInput: call.modelInput, templateId: url.searchParams.get("template") })
+      res.end(JSON.stringify({ ok: true, index, ...result }))
+    } catch (err) { res.statusCode = 502; res.end(JSON.stringify({ error: String(err?.message ?? err) })) }
+    return
+  }
   const data = url.pathname === "/api/status" ? results.status
     : url.pathname === "/api/last-run" ? replaying ? { events: [] } : runs[url.searchParams.get("harness")]
     : url.pathname === "/api/llm-calls" ? { calls: withModelInputs(calls) }
+    : url.pathname === "/api/templates" ? { templates: listTemplates() }
     : url.pathname === "/api/models" ? { models: [{ value: results.status.ocModel, label: results.status.ocModel.split("/").pop() }] } : { error: "QA replay: read-only" }
   res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(data))
 })
@@ -72,6 +85,7 @@ const browser = spawn(executable, ["--headless=new", "--disable-gpu", "--no-firs
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 let ws, sequence = 0
 const pending = new Map(), errors = [], checks = []
+const downloads = path.join(evidence, "downloads-" + Date.now())
 function command(method, params = {}) {
   return new Promise((resolve, reject) => {
     const id = ++sequence
@@ -91,6 +105,26 @@ async function wait(expression) {
 async function screenshot(name) {
   const { data } = await command("Page.captureScreenshot", { format: "png" })
   await writeFile(path.join(evidence, name + ".png"), Buffer.from(data, "base64"))
+}
+async function verifyDownload(call) {
+  await evaluate(`document.querySelector('[data-request-index="${call.index}"] button[onclick="downloadInput(${call.index},false)"]').click()`)
+  let downloaded
+  for (let n = 0; n < 100; n++) {
+    try { downloaded = await readFile(path.join(downloads, `model-request-${call.index}.raw.json`), "utf8"); break } catch {}
+    await delay(100)
+  }
+  const payload = call.anthropicRequest ?? call.request
+  const original = call.anthropicRequest ? call.upstreamRequestRaw : call.requestRaw
+  assert.equal(downloaded, original ?? JSON.stringify(payload, null, 2))
+  assert.deepEqual(JSON.parse(downloaded), payload)
+  await evaluate(`document.querySelector('[data-request-index="${call.index}"] button[onclick="downloadInput(${call.index},true)"]').click()`)
+  let formatted
+  for (let n = 0; n < 100; n++) {
+    try { formatted = await readFile(path.join(downloads, `model-request-${call.index}.json`), "utf8"); break } catch {}
+    await delay(100)
+  }
+  assert.deepEqual(JSON.parse(formatted), payload)
+  assert.ok(formatted.includes("\n  "))
 }
 try {
   let page
@@ -135,27 +169,70 @@ try {
   assert(await evaluate('document.querySelector("#colFlow").hidden && document.querySelector("#colLlm").hidden && !document.querySelector("#colTx").hidden'))
   await evaluate('document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click()')
   checks.push("Header controls, single-line hidden composer, independent panels, reflow and persisted preferences")
+  await mkdir(downloads, { recursive: true })
+  await command("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads })
   await evaluate('document.querySelector("[data-h=opencode]").click()')
   await wait(`document.querySelector("#llmBadge")?.textContent === "捕获请求: ${calls.filter(call => call.harness === "opencode").length}"`)
+  const originalPrompt = runs.opencode.events.find(event => event.type === "viz.run").properties.prompt
+  assert.equal(await evaluate(`document.querySelectorAll("#transcript .user").length`), 1)
+  assert(await evaluate(`[...document.querySelectorAll("#transcript .assistant .body")].every(body => body.dataset.rawText !== ${JSON.stringify(originalPrompt)})`))
+  checks.push("OpenCode user-message events are not mislabelled as assistant")
   await evaluate('document.querySelector("#fn-llm").click(); document.querySelector("#nodePanel .rec .hd").click()')
-  await wait('document.querySelector("#nodePanel")?.textContent.includes("原始请求 JSON（完整")')
-  assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("模型输入")'))
+  await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
+  assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("请求输入")'))
   assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.textContent.includes("system")'))
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("messages")'))
+  await verifyDownload(calls.find(call => call.harness === "opencode"))
+  checks.push("OpenCode browser download equals the captured forwarded API body")
+  // 模板预览：真实捕获的请求 JSON 经固定模板本地渲染，逐模板验证并下载。
+  const previewCall = calls.find(call => call.harness === "opencode")
+  await wait(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] select.template-select option[value="qwen38"]') != null`)
+  const previewSignatures = { qwen38: "<|im_start|>", "glm53": "[gMASK]<sop>", "kimi-k3": "<|open|>message" }
+  for (const [templateId, signature] of Object.entries(previewSignatures)) {
+    await evaluate(`(() => { const sel = document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] select.template-select'); sel.value = ${JSON.stringify(templateId)}; renderTemplate(${previewCall.index}, sel) })()`)
+    await wait(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output')?.textContent.includes(${JSON.stringify(signature)})`)
+    assert(await evaluate(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output').textContent.includes(${JSON.stringify(originalPrompt.slice(0, 12))})`), "rendered preview must contain the task prompt")
+  }
+  await evaluate(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .download-rendered').click()`)
+  let renderedDownload
+  for (let n = 0; n < 100; n++) {
+    try { renderedDownload = await readFile(path.join(downloads, `model-request-${previewCall.index}.rendered-kimi-k3.txt`), "utf8"); break } catch {}
+    await delay(100)
+  }
+  assert(renderedDownload?.includes("<|open|>message"), "downloaded rendered text must match the selected template output")
+  assert(renderedDownload.includes(originalPrompt.slice(0, 12)), "downloaded rendered text must contain the task prompt")
+  assert.equal(renderedDownload, await evaluate(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output').textContent`), "download must preserve the complete rendered text")
+  assert(await evaluate(`(() => { const details = document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-details'); return !details.open && details.getBoundingClientRect().height <= details.querySelector("summary").getBoundingClientRect().height + 2 })()`), "metadata must be folded by default")
+  checks.push("Template preview renders the captured request through pinned Qwen3.8/GLM5.3/Kimi K3 templates and downloads")
+  await evaluate(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output').scrollIntoView({ block: "center" })`)
+  await delay(200)
   await screenshot("opencode-desktop")
   checks.push("OpenCode real-event replay and full request panel")
   await evaluate('document.querySelector("[data-h=codex]").click()')
   await wait(`document.querySelector("#llmBadge")?.textContent === "捕获请求: ${calls.filter(call => call.harness === "codex").length}"`)
   await evaluate('document.querySelector("#nodePanel .rec .hd").click()')
-  await wait('document.querySelector("#nodePanel")?.textContent.includes("原始请求 JSON（完整")')
+  await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("native-trace")'))
   assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.querySelector("summary").textContent.includes("developer")'))
   const reconstructed = withModelInputs(calls).find(call => call.harness === "codex" && call.modelInput.kind === "reconstructed")
   assert(reconstructed, "Actual native data must include a response-chain continuation")
   await evaluate(`const targetRecord = store["c-llm"].find(record => record.kind === "llm" && record.data.index === ${reconstructed.index}); document.querySelectorAll("#nodePanel .rec .hd")[store["c-llm"].indexOf(targetRecord)].click()`)
-  await wait('document.querySelector("#nodePanel")?.textContent.includes("按响应链重建")')
-  assert.equal(await evaluate(`modelInputCache[${reconstructed.index}].items.length`), reconstructed.modelInput.items.length)
-  checks.push("Readable developer/system instructions and complete client response-chain reconstruction")
+  await wait('document.querySelector("#nodePanel")?.textContent.includes("重建上下文（分析结果，非原始请求）")')
+  assert.deepEqual(JSON.parse(await evaluate(`requestCache[${reconstructed.index}]`)), reconstructed.request)
+  await verifyDownload(reconstructed)
+  checks.push("Readable original request and byte-preserving browser download; rebuilt context stays separate")
+  // 已捕获的 Codex Responses 请求按所选模板组装，实际字段转换折叠显示。
+  await wait(`document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] select.template-select option[value="qwen38"]') != null`)
+  await evaluate(`(() => { const sel = document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] select.template-select'); sel.value = "qwen38"; renderTemplate(${reconstructed.index}, sel) })()`)
+  await wait(`document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] .template-output')?.textContent.includes("<|im_start|>")`)
+  assert(await evaluate(`(() => { const details = document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] .template-details'); return !details.open && details.getBoundingClientRect().height <= details.querySelector("summary").getBoundingClientRect().height + 2 })()`), "conversion details must not crowd the rendered result")
+  await evaluate(`document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] .template-details summary').click()`)
+  assert(await evaluate(`document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] .template-meta').textContent.includes("responses")`), "details must identify the known source format")
+  assert(await evaluate(`(() => { const text = document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] .template-warnings').textContent; const notes = text ? text.split("\\n") : []; return new Set(notes).size === notes.length && !text.includes("服务端决定") })()`), "actual conversion notes must be deduplicated")
+  await evaluate(`document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"] .template-details summary').click(); document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"]').scrollIntoView({ block: "center" })`)
+  await delay(200)
+  checks.push("Known Codex Responses input renders with compact controls and folded, deduplicated conversion details")
+  await screenshot("codex-template-preview")
   await screenshot("codex-desktop")
   checks.push("Codex native-trace replay, source labeling and full request panel")
   const markdown = '# Markdown 排版\n\n支持 **重点**、`行内代码` 和 [源码链接](https://github.com/openai/codex)。\n\n## 请求生命周期\n\n1. 组织上下文\n2. 执行工具\n3. 反馈结果\n\n> 工具结果进入下一次请求。\n\n| 阶段 | 内容 |\n| --- | --- |\n| 输入 | 指令与历史 |\n| 工具 | 文件与命令 |\n\n```js\nconst result = await runTool();\n```\n\n- [x] 完成读取\n- [ ] 等待修改'

@@ -195,6 +195,41 @@ test("synthetic: text and reasoning both use field=text and snapshot part types"
   assert.equal(ui.read("pendingDeltas.size"), 0)
 })
 
+test("synthetic: OpenCode user text is not echoed as assistant, while genuine assistant repetition is preserved", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root", prompt: "ORIGINAL_PROMPT" })
+  ui.event("message.updated", { info: { id: "user-message", sessionID: "root", role: "user" } })
+  ui.event("message.part.updated", { part: { id: "user-part", messageID: "user-message", sessionID: "root", type: "text", text: "ORIGINAL_PROMPT" } })
+  ui.event("message.part.delta", { sessionID: "root", messageID: "user-message", partID: "user-part", field: "text", delta: "ORIGINAL_PROMPT" })
+  assert.equal(ui.read("bubbles['root:user-part']"), undefined)
+  assert.equal(ui.elements.get("transcript").children.length, 1)
+  ui.event("message.updated", { info: { id: "assistant-message", sessionID: "root", role: "assistant" } })
+  ui.event("message.part.updated", { part: { id: "assistant-part", messageID: "assistant-message", sessionID: "root", type: "text", text: "ORIGINAL_PROMPT" } })
+  assert.equal(ui.read("bubbles['root:assistant-part'].dataset.rawText"), "ORIGINAL_PROMPT")
+})
+
+test("synthetic: text arriving before message role waits instead of being labelled assistant", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.event("message.part.updated", { part: { id: "late-part", messageID: "late-message", sessionID: "root", type: "text", text: "LATE_TEXT" } })
+  assert.equal(ui.read("bubbles['root:late-part']"), undefined)
+  ui.event("message.updated", { info: { id: "late-message", sessionID: "root", role: "assistant" } })
+  assert.equal(ui.read("bubbles['root:late-part'].dataset.rawText"), "LATE_TEXT")
+  assert.equal(ui.read("pendingMessageText.size"), 0)
+})
+
+test("synthetic: JSON readability formatting changes whitespace only, retaining numeric and string lexemes", () => {
+  const ui = createFrontend()
+  const raw = '{"integer":123456789012345678901234567890,"float":1.00e+004,"escaped":"\\u4e2d\\n\\\"quoted\\\"","nested":[{},[],true,null]}'
+  const output = ui.evaluate("formatRequestJSON(fixture)", raw)
+  const tokenize = text => text.match(/"(?:\\[\s\S]|[^"\\])*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g)
+  assert.deepEqual(tokenize(output), tokenize(raw))
+  assert.ok(output.includes('\n  "integer":'))
+  assert.ok(output.includes("123456789012345678901234567890"))
+  assert.ok(output.includes("1.00e+004"))
+  assert.deepEqual(JSON.parse(output), JSON.parse(raw))
+})
+
 test("synthetic: unrelated sessions stay raw-only until ancestry is known", () => {
   const ui = createFrontend()
   ui.event("viz.run", { sessionID: "root" })
@@ -386,13 +421,12 @@ test("synthetic: native WS request rendering preserves complete raw JSON and inv
   }
   const rendered = ui.evaluate("renderLlmCall(fixture)", call)
   const sections = rawSections(rendered)
-  for (const value of [call.request, call.request.request.input, call.request.request.tools, call.rawResponse, call.response, call.trace])
+  for (const value of [call.request, call.request.request.tools, call.rawResponse, call.response, call.trace])
     assert.ok(sections.some(section => isDeepStrictEqual(section, value)), "full JSON section must survive without truncation or omitted fields")
   assert.match(rendered, /previous_response_id/)
   assert.match(rendered, /previous-42/)
-  assert.match(rendered, /WebSocket/)
-  assert.match(rendered, /\u589e\u91cf input/u)
-  assert.match(rendered, /\u4e0d\u7b49\u540c system/u)
+  assert.match(rendered, /Codex 原生记录/)
+  assert.ok(rendered.includes("增量请求"))
   assert.doesNotMatch(rendered, /instructions\uff08=system/u)
   assert.ok(rendered.includes(escapeText(longText + "<safe>&")))
 })
@@ -409,23 +443,38 @@ test("synthetic: translated request is its own complete JSON, not a content-equi
   const sections = rawSections(rendered)
   assert.ok(sections.some(section => isDeepStrictEqual(section, call.anthropicRequest)))
   assert.ok(sections.some(section => isDeepStrictEqual(section, call.translationWarnings)))
-  assert.match(rendered, /translation-proxy/)
-  assert.match(rendered, /\u4e0d\u4fdd\u8bc1\u5185\u5bb9\u7b49\u4ef7/u)
+  assert.match(rendered, /转译后上游请求/)
+  assert.ok(rendered.includes("不保证与上游等价"))
 })
 
-test("synthetic: readable model input opens developer instructions and preserves the full export object", () => {
+test("synthetic: request download preserves original JSON, not rebuilt context or duplicate tools", () => {
   const ui = createFrontend("codex")
+  const request = { model: "model", reasoning: { effort: "high" }, store: false, input: [
+    { type: "additional_tools", role: "developer", tools: [{ name: "read" }] },
+    { type: "message", role: "developer", content: [{ text: longText }] },
+  ] }
+  const raw = JSON.stringify(request, null, 4) + "\n"
   const modelInput = { kind: "reconstructed", complete: true, format: "responses", system: "", chain: [1, 2], items: [
     { type: "additional_tools", role: "developer", tools: [] },
     { type: "message", role: "developer", content: [{ text: longText }] },
     { type: "function_call_output", call_id: "tool-1", output: "FEEDBACK" },
   ] }
-  const rendered = ui.evaluate("renderLlmCall(fixture)", { index: 2, harness: "codex", request: { input: [] }, modelInput })
-  assert.match(rendered, /模型输入/)
-  assert.match(rendered, /按响应链重建/)
+  const rendered = ui.evaluate("renderLlmCall(fixture)", { index: 2, harness: "codex", source: "native-trace", request, requestRaw: raw, modelInput })
+  assert.ok(rendered.includes("下载 JSON") && rendered.includes("下载原文"))
+  assert.match(rendered, /重建上下文（分析结果，非原始请求）/)
   assert.match(rendered, /class="input-message" open><summary>2\. developer/)
   assert.ok(rendered.includes(longText), "readable input must not truncate instructions")
-  assert.deepEqual(ui.read("modelInputCache[2]"), modelInput)
+  assert.equal(ui.read("requestCache[2]"), raw)
+  assert.deepEqual(JSON.parse(ui.read("requestCache[2]")), request)
+  assert.doesNotMatch(rendered, /工具定义（完整）|tools（请求顶层字段）/)
+})
+
+test("synthetic: third-party download is exactly the upstream body, including generation parameters", () => {
+  const ui = createFrontend("codex")
+  const upstream = { model: "third-party", max_tokens: 16384, stream: true, messages: [{ role: "user", content: "adapted" }] }
+  const raw = JSON.stringify(upstream)
+  ui.evaluate("renderLlmCall(fixture)", { index: 3, harness: "codex", request: { instructions: "original" }, anthropicRequest: upstream, upstreamRequestRaw: raw })
+  assert.equal(ui.read("requestCache[3]"), raw)
 })
 
 test("synthetic: OpenCode raw requests retain non-text blocks and complete tool schemas", () => {

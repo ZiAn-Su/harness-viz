@@ -206,6 +206,8 @@ for (const fixture of [
     assert.equal(b.ocRequests.length, 0)
     assert.equal(b.context.llmCalls.length, 1)
     const call = b.context.llmCalls[0]
+    assert.equal(call.upstreamRequestRaw, b.fetches[0][1].body)
+    assert.deepEqual(JSON.parse(call.upstreamRequestRaw), JSON.parse(JSON.stringify(call.anthropicRequest)))
     assert.equal(call.source, "translation-proxy")
     assert.equal(call.error, fixture.error)
     assert.equal(call.rawResponse, raw)
@@ -302,6 +304,7 @@ test("synthetic OpenCode proxy uses session ownership instead of the current run
     assert.equal(b.fetches.length, 1)
     assert.equal(b.context.llmCalls[0].runID, owner)
     assert.equal(b.context.llmCalls[0].rawResponse, raw)
+    assert.equal(b.context.llmCalls[0].requestRaw, b.fetches[0][1].body.toString("utf8"))
     assert.deepEqual(b.events().map(event => event.runID), [owner, owner])
     assert.equal(b.context.runs.opencode.events.length, owner === "oc-current" ? 2 : 0)
   }

@@ -18,7 +18,7 @@ export async function readTraceEvents(root, cursors) {
     for (; cursor < lines.length; cursor++) {
       if (!lines[cursor].trim()) continue
       const event = JSON.parse(lines[cursor])
-      const payloads = {}
+      const payloads = {}, rawPayloads = {}
       for (const [key, ref] of Object.entries(event.payload ?? {})) {
         if (!ref || typeof ref !== "object" || typeof ref.path !== "string") continue
         const absolute = path.resolve(dir, ref.path)
@@ -26,9 +26,10 @@ export async function readTraceEvents(root, cursors) {
         if (relative.startsWith("..") || path.isAbsolute(relative) || !relative.startsWith("payloads" + path.sep)) {
           throw new Error("Unsafe trace payload path")
         }
-        payloads[key] = JSON.parse(await readFile(absolute, "utf8"))
+        rawPayloads[key] = await readFile(absolute, "utf8")
+        payloads[key] = JSON.parse(rawPayloads[key])
       }
-      events.push({ bundle: bundle.name, event, payloads })
+      events.push({ bundle: bundle.name, event, payloads, rawPayloads })
     }
     nextCursors.set(bundle.name, cursor)
   }

@@ -1,0 +1,15 @@
+[gMASK]<sop><|system|>Reasoning Effort: Max<|system|>
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{"name": "read", "description": "Read a text file.", "parameters": {"type": "object", "properties": {"filePath": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["filePath"]}}
+{"name": "list", "description": "List directory entries.", "parameters": {"type": "object", "properties": {"dirPath": {"type": "string"}}, "required": ["dirPath"]}}
+</tools>
+
+For each function call, output the function name and arguments within the following XML format:
+<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|system|>你是 OpenCode 编程助手。<|user|>介绍 unrolling-the-codex-agent-loop 资料：说明 Responses API 请求里有哪些字段。<|assistant|><think>先读文件再列目录。</think><tool_call>read<arg_key>filePath</arg_key><arg_value>notes/unrolling-the-codex-agent-loop.md</arg_value><arg_key>limit</arg_key><arg_value>40</arg_value></tool_call><tool_call>list<arg_key>dirPath</arg_key><arg_value>notes</arg_value></tool_call><|observation|><tool_response># unrolling-the-codex-agent-loop
+文章介绍 Codex agent loop。</tool_response><tool_response>- a.md
+- b.md</tool_response><|assistant|><think>

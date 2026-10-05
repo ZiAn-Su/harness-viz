@@ -1,0 +1,21 @@
+{
+  "sources": {
+    "qwen38": {
+      "url": "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B/raw/207bd685a7e3696cfaff12ded7c6a7ea0f88c996/chat_template.jinja",
+      "sha256": "40ce34a5bcbc0231462740761215bc31a83882a8b3a4b6aa1c6e869b95945e4e"
+    },
+    "glm53": {
+      "url": "https://huggingface.co/zai-org/GLM-5.3/raw/aca966e4e02791568aa6a4ced368624b3d897f42/chat_template.jinja",
+      "sha256": "3740abcea51c45830cb3ca562084ad5fb2ef53589376f73332e9886f93ade41c"
+    },
+    "kimi-k3": {
+      "url": "https://huggingface.co/moonshotai/Kimi-K3/raw/f831ab66814297da540d832a5235f8e904f29d06/encoding_k3.py",
+      "sha256": "49ff03305fdc4be26867972788d36150b67f8a9e852e62bb7959d87482223676"
+    }
+  },
+  "method": {
+    "qwen38": "jinja2 sandbox (transformers-equivalent) render of pinned chat_template.jinja",
+    "glm53": "jinja2 sandbox (transformers-equivalent) render of pinned chat_template.jinja",
+    "kimi-k3": "exec of pinned encoding_k3.py build_chat_segments; text = concat(segment.text)"
+  }
+}

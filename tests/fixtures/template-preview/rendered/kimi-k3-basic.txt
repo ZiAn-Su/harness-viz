@@ -1,0 +1,1 @@
+<|open|>message role="system"<|sep|>你是 OpenCode 编程助手。<|close|>message<|sep|><|end_of_msg|><|open|>message role="user"<|sep|>介绍 unrolling-the-codex-agent-loop 资料：说明 Responses API 请求里有哪些字段。<|close|>message<|sep|><|end_of_msg|><|open|>message role="assistant"<|sep|><|open|>think<|sep|>
