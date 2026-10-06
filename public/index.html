@@ -72,8 +72,13 @@
   }
   .fnode:hover { border-color: var(--accent); }
   .fnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.35); }
-   .fnode .t { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; padding-right: 14px; }
-  .fnode .s { font-size: 10px; color: var(--dim); margin-top: 2px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .fnode { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+  .fnode .t { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .fnode .s { font-size: 12px; color: var(--dim); margin-top: 4px; line-height: 1.35; text-align: center; }
+  .fnode.terminal { border-radius: 32px; background: #192a40; }
+  .fnode.subprocess { box-shadow: inset 7px 0 0 #b8a2ed22, inset -7px 0 0 #b8a2ed22; border-color: var(--purple); }
+  .process-boundary { position: absolute; top: 8px; bottom: 8px; width: 1px; background: var(--purple); opacity: .7; }
+  .process-boundary.left { left: 7px; } .process-boundary.right { right: 7px; }
   .fnode .cnt {
     position: absolute; right: 6px; top: 6px; font-size: 10px; color: #c5d7f0;
     background: #2a3b52; border-radius: 5px; padding: 1px 5px; display: none; font-weight: 600;
@@ -84,18 +89,43 @@
   .fnode.done { border-color: var(--accent); }
   @keyframes blink { 50% { opacity: .2; } }
   .flowsvg path, .flowsvg line { stroke: var(--dim); stroke-width: 1.5; fill: none; }
-  .flowsvg .lbl { fill: var(--dim); font-size: 10px; font-family: inherit; }
-  .flowsvg .lbl2 { fill: var(--cyan); font-size: 10px; }
+  .flowsvg .lbl { fill: var(--dim); font-size: 12px; font-family: inherit; }
+  .flowsvg .lbl2 { fill: var(--cyan); font-size: 12px; }
   .flowsvg .loop { stroke: var(--cyan); }
   .flowsvg .subedge { stroke: var(--purple); }
+  .flowsvg .exitedge { stroke: var(--red); }
+  .flowsvg .wire-gap { stroke: none; fill: var(--panel); }
   .flowsvg .loopbox { stroke: var(--cyan); stroke-dasharray: 7 5; stroke-width: 1.5; fill: rgba(57,197,207,.04); }
   .flowsvg .boxlbl { fill: var(--cyan); font-size: 11px; font-weight: 600; }
+  .flowsvg .childloop { stroke: var(--purple); stroke-dasharray: 7 5; stroke-width: 1.5; fill: #b8a2ed08; }
+  .flowsvg .childlbl { fill: var(--purple); font-size: 12px; font-weight: 600; }
+  .flowsvg .envbox { stroke: #465974; stroke-width: 1.2; fill: #17233480; }
+  .flowsvg marker path { stroke: none; fill: var(--dim); }
+  .flowsvg marker .arrow-loop { fill: var(--cyan); }
+  .flowsvg marker .arrow-child { fill: var(--purple); }
+  .flowsvg marker .arrow-exit { fill: var(--red); }
+  .zone-label { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 1px; padding: 0 4px; line-height: 1.1; cursor: pointer; }
+  .zone-label b { font-size: 14px; color: #bdd1ec; }
+  .zone-label > span:not(.cnt) { font-size: 10px; color: var(--dim); }
+  .zone-label .cnt { display: none; position: absolute; right: 3px; top: 3px; font-size: 10px; color: var(--cyan); }
+  .zone-label:hover b, .zone-label.selected b { color: var(--accent); }
+  .zone-label.active b { color: var(--green); }
+  .flow-legend { display: flex; flex-wrap: wrap; gap: 7px 12px; padding: 9px 14px 3px; flex-shrink: 0; color: var(--dim); font-size: 10px; }
+  .flow-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .flow-legend i { display: inline-block; width: 13px; height: 9px; border: 1px solid var(--dim); }
+  .flow-legend .legend-terminal { border-radius: 8px; }
+  .flow-legend .legend-decision { width: 9px; height: 9px; transform: rotate(45deg); margin: 0 2px; }
+  .flow-legend .legend-loop { border-style: dashed; border-color: var(--cyan); }
+  .flow-legend .legend-env { background: #25354c; border-color: #617b9d; }
+  .flow-legend .legend-subprocess { border-left: 3px double var(--purple); border-right: 3px double var(--purple); }
+  .flow-legend .legend-exit { height: 0; border: 0; border-top: 2px solid var(--red); }
+  .flow-hint { color: var(--dim); font-size: 10px; padding: 3px 14px 7px; flex-shrink: 0; }
 
   /* 扁平菱形判断节点：clip-path 双层实现边框 + 正置文字 */
   .fdia { position: absolute; width: 170px; height: 64px; z-index: 2; cursor: pointer; transition: filter .25s; }
   .fdia .shape { position: absolute; inset: 0; background: #4d5560; clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); transition: background .25s; }
   .fdia .inner { position: absolute; inset: 2px; background: var(--panel2); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
-  .fdia .txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; font-weight: 600; padding: 6px 26px; line-height: 1.25; }
+  .fdia .txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 14px; font-weight: 600; padding: 6px 26px; line-height: 1.25; }
   .fdia .cnt { position: absolute; right: 8px; top: -8px; font-size: 10px; color: var(--bg); background: var(--accent); border-radius: 9px; padding: 1px 7px; display: none; font-weight: 700; z-index: 3; }
 
   /* ── 中：转写 ── */
@@ -197,16 +227,16 @@
   #flowCanvas { position: absolute; top: 0; left: 0; width: 700px; height: 1070px; transform-origin: 0 0; }
   /* 两个 harness 各一层流程图，同尺寸同几何纪律，切换显隐 */
   #flowOpencode, #flowCodex { position: absolute; top: 0; left: 0; width: 700px; height: 1070px; }
-  .fnode.note { border-style: dashed; opacity: .92; }
   #harnessSwitch { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .hbtn { padding: 5px 16px; font-size: 12px; border: none; border-radius: 0; background: var(--bg); color: var(--dim); cursor: pointer; }
   .hbtn.on { background: var(--accent); color: #06202e; font-weight: 700; }
 
   /* 节点说明 tab */
   .doc { font-size: 14px; line-height: 1.8; padding: 8px 4px; }
-  .doc h3 { font-size: 13px; color: var(--accent); margin: 12px 0 4px; }
+  .doc h3 { font-size: 14px; color: var(--accent); margin: 18px 0 6px; }
   .doc h3:first-child { margin-top: 2px; }
   .doc p { margin: 6px 0; color: var(--text); }
+  .doc .lesson-example { padding: 10px 12px; border-left: 3px solid var(--cyan); background: #7cbccc09; border-radius: 0 6px 6px 0; }
   .doc li { margin: 4px 0 4px 18px; }
   .doc code { color: var(--cyan); font-size: 11px; }
   .doc table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
@@ -347,134 +377,14 @@
   <main>
     <div id="colFlow" class="workspace-panel">
       <div class="colhead"><span>流程图</span><div class="flow-actions"><button id="flowZoomOut" title="缩小">−</button><button id="flowZoomIn" title="放大">＋</button><button id="flowReset" title="适配面板">适配</button></div></div>
+      <div class="flow-legend" aria-label="流程图图例"><span><i class="legend-terminal"></i>入口 / 返回</span><span><i class="legend-process"></i>处理</span><span><i class="legend-decision"></i>二向 / 多向结果</span><span><i class="legend-subprocess"></i>子流程</span><span><i class="legend-loop"></i>主循环</span><span><i class="legend-env"></i>环境与权限</span><span><i class="legend-exit"></i>终止异常</span></div>
+      <p class="flow-hint">交叉断口不连接。工具分类与反馈按职责归并；输出和执行可重叠。省略的内部路径见节点说明。</p>
       <div id="flowWrap"><div id="flowCanvas">
         <div id="flowOpencode">
-        <svg id="flowSvg" class="flowsvg" viewBox="0 0 700 1070">
-          <defs>
-            <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker>
-            <marker id="ahc" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#39c5cf"/></marker>
-            <marker id="ahp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#bc8cff"/></marker>
-          </defs>
-          <!-- runLoop 循环体虚线框：框内 = 每一轮的完整流程 -->
-          <rect class="loopbox" x="16" y="170" width="514" height="870" rx="14"/>
-          <text class="boxlbl" x="296" y="192">V1 runLoop 源码机制简图</text>
-
-          <line x1="280" y1="68"   x2="280" y2="76"   marker-end="url(#ah)"/>
-          <path d="M280,140 L280,145 L170,145 L170,150" marker-end="url(#ah)"/>
-          <line x1="170" y1="214"  x2="170" y2="238"  marker-end="url(#ah)"/>
-          <line x1="170" y1="302"  x2="170" y2="326"  marker-end="url(#ah)"/>
-          <text class="lbl" x="178" y="320">否</text>
-          <line x1="170" y1="390"  x2="170" y2="414"  marker-end="url(#ah)"/>
-          <text class="lbl" x="178" y="408">无子任务</text>
-          <line x1="170" y1="478"  x2="170" y2="502"  marker-end="url(#ah)"/>
-          <text class="lbl" x="178" y="496">无压缩任务</text>
-          <line x1="170" y1="566"  x2="170" y2="590"  marker-end="url(#ah)"/>
-          <text class="lbl" x="178" y="584">未溢出</text>
-          <line x1="170" y1="654"  x2="170" y2="678"  marker-end="url(#ah)"/>
-          <text class="lbl" x="178" y="670">采样流内处理</text>
-          <line x1="170" y1="742"  x2="170" y2="766"  marker-end="url(#ah)"/>
-          <text class="lbl" x="178" y="760">是</text>
-          <line x1="170" y1="830"  x2="170" y2="854"  marker-end="url(#ah)"/>
-          <line x1="170" y1="918"  x2="170" y2="942"  marker-end="url(#ah)"/>
-          <!-- 左回环总线（实线）：压缩/溢出命中、⑦完成、模型未请求工具 → 回循环头 -->
-          <path class="loop" d="M85,446 L34,446"/>
-          <path d="M255,446 L548,446 L548,286 L556,286" marker-end="url(#ah)"/>
-          <text class="lbl" x="330" y="438">compaction 返回 stop → 结束</text>
-          <path class="loop" d="M85,534 L34,534"/>
-          <path class="loop" d="M85,710 L34,710"/>
-          <text class="lbl" x="93" y="702">否</text>
-          <path class="loop" d="M60,974 L34,974"/>
-          <path class="loop" d="M34,974 L34,182 L60,182" marker-end="url(#ahc)"/>
-          <text class="lbl2" x="34" y="1026">↩ 回到循环体开头</text>
-          <!-- 右回环（实线）：⑧ 子代理完成 → 回循环头 -->
-          <path class="subedge" d="M510,358 L520,358 L520,182 L282,182" marker-end="url(#ahp)"/>
-          <text class="lbl2" x="330" y="162">完成 → 回循环头</text>
-          <path class="subedge" d="M255,358 L330,358" marker-end="url(#ah)"/>
-          <text class="lbl" x="270" y="350">命中</text>
-          <path class="subedge" d="M280,798 L420,798 L420,390" marker-end="url(#ahp)"/>
-          <text class="lbl" x="310" y="788">普通 task 工具 → 子会话</text>
-          <line x1="255" y1="270" x2="556" y2="270" marker-end="url(#ah)"/>
-          <text class="lbl" x="420" y="262">是·break 退出</text>
-        </svg>
-
-        <div class="fnode" data-node="ui" style="left:190px;top:4px;width:180px"   id="fn-ui"><div class="t">① 网页输入</div><div class="s mono">POST /api/run</div></div>
-        <div class="fnode" data-node="server" style="left:190px;top:76px;width:180px"  id="fn-server"><div class="t">② Server 受理</div><div class="s mono">prompt.ts:1052 → 写 user 消息</div><span class="cnt" id="cnt-server"></span></div>
-        <div class="fnode" data-node="loop" style="left:60px;top:150px;width:220px" id="fn-loop"><div class="t">③ runLoop / 消息记录</div><div class="s mono">prompt.ts runLoop:1081 · 消息数≠迭代数</div><span class="cnt" id="cnt-loop"></span></div>
-        <div class="fdia" data-node="decide" style="left:85px;top:238px" id="fn-decide"><div class="shape"></div><div class="inner"></div><div class="txt">可退出循环?</div></div>
-        <div class="fdia" data-node="subflow1" style="left:85px;top:326px" id="fn-subflow1"><div class="shape"></div><div class="inner"></div><div class="txt">③b1 SubtaskPart?</div><span class="cnt" id="cnt-subflow1"></span></div>
-        <div class="fdia" data-node="subflow2" style="left:85px;top:414px" id="fn-subflow2"><div class="shape"></div><div class="inner"></div><div class="txt">③b2 有压缩任务?</div><span class="cnt" id="cnt-subflow2"></span></div>
-        <div class="fdia" data-node="subflow3" style="left:85px;top:502px" id="fn-subflow3"><div class="shape"></div><div class="inner"></div><div class="txt">③b3 上下文溢出?</div><span class="cnt" id="cnt-subflow3"></span></div>
-        <div class="fnode" data-node="llm" style="left:60px;top:590px;width:220px" id="fn-llm"><div class="t">④ LLM 调用</div><div class="s mono">⑥装配(:1226) ⑦建消息(:1257) ⑧streamText(:1272)</div><span class="cnt" id="cnt-llm"></span></div>
-        <div class="fdia" data-node="decide2" style="left:85px;top:678px" id="fn-decide2"><div class="shape"></div><div class="inner"></div><div class="txt">模型请求工具?</div></div>
-        <div class="fnode" data-node="tool" style="left:60px;top:766px;width:220px"  id="fn-tool"><div class="t">⑤ 流内工具调度</div><div class="s mono">tools.ts:59-132 · processor.ts:216/315</div><span class="cnt" id="cnt-tool"></span></div>
-        <div class="fnode" data-node="perm" style="left:60px;top:854px;width:220px"  id="fn-perm"><div class="t">⑥ 权限门</div><div class="s mono">permission/index.ts:67 ask → 挂起</div><span class="cnt" id="cnt-perm"></span></div>
-        <div class="fnode" data-node="exec" style="left:60px;top:942px;width:220px"  id="fn-exec"><div class="t">⑦ 执行 · 落库</div><div class="s mono">processor.ts:160 → SQLite</div><span class="cnt" id="cnt-exec"></span></div>
-        <div class="fnode sub" data-node="sub" style="left:330px;top:326px;width:180px" id="fn-sub"><div class="t">⑧ 子代理</div><div class="s mono">子 session 独立 runLoop</div><span class="cnt" id="cnt-sub"></span></div>
-        <div class="fnode done" data-node="done" style="left:556px;top:238px;width:128px" id="fn-done"><div class="t">⑨ 会话结束</div><div class="s mono">idle ≠ 成功 · prune forked</div></div>
         </div>
 
-        <!-- ══════════ codex 流程图（几何纪律与 opencode 一致：viewBox=CSS=容器=700×1070，节点固定 64px） ══════════ -->
         <div id="flowCodex" style="display:none">
-        <svg class="flowsvg" viewBox="0 0 700 1070">
-          <defs>
-            <marker id="ah2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker>
-            <marker id="ahc2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#39c5cf"/></marker>
-          </defs>
-          <!-- 源码机制，不是函数 trace；工具在采样流内调度。 -->
-          <rect class="loopbox" x="16" y="226" width="514" height="784" rx="14"/>
-          <text class="boxlbl" x="200" y="1002">run_turn loop（turn.rs:426）机制简图</text>
 
-          <line x1="280" y1="68"   x2="280" y2="76"   marker-end="url(#ah2)"/>
-          <path d="M280,140 L280,145 L170,145 L170,150" marker-end="url(#ah2)"/>
-          <line x1="170" y1="214"  x2="170" y2="238"  marker-end="url(#ah2)"/>
-          <line x1="170" y1="302"  x2="170" y2="326"  marker-end="url(#ah2)"/>
-          <line x1="170" y1="390"  x2="170" y2="414"  marker-end="url(#ah2)"/>
-          <line x1="170" y1="478"  x2="170" y2="502"  marker-end="url(#ah2)"/>
-          <text class="lbl" x="178" y="496">流内路由，非 llm.response 后触发</text>
-          <line x1="170" y1="566"  x2="170" y2="590"  marker-end="url(#ah2)"/>
-          <text class="lbl" x="178" y="584">是</text>
-          <!-- 判断A 否：无工具调用 → 直接到判断B -->
-          <path d="M85,534 L40,534 L40,710 L85,710" marker-end="url(#ah2)"/>
-          <text class="lbl" x="28" y="616">否</text>
-          <line x1="170" y1="654"  x2="170" y2="678"  marker-end="url(#ah2)"/>
-          <line x1="170" y1="742"  x2="170" y2="766"  marker-end="url(#ah2)"/>
-          <text class="lbl" x="178" y="760">是</text>
-          <!-- 无跟进仍需 stop hooks；hook 可要求继续，不能直接画为保证 break。 -->
-          <path d="M255,710 L330,710" marker-end="url(#ah2)"/>
-          <text class="lbl" x="277" y="702">否</text>
-          <path d="M420,742 L420,752 L540,752 L540,830 L620,830 L620,854" marker-end="url(#ah2)"/>
-          <text class="lbl" x="546" y="816">正常收尾 → 压缩检查</text>
-          <path d="M510,710 L548,710 L548,270 L556,270" marker-end="url(#ah2)"/>
-          <text class="lbl" x="552" y="570">hook 提前结束</text>
-          <path d="M684,886 L692,886 L692,310 L620,310 L620,302" marker-end="url(#ah2)"/>
-          <path class="loop" d="M420,678 L420,270 L280,270" marker-end="url(#ahc2)"/>
-          <text class="lbl2" x="425" y="470">hook 可继续</text>
-          <!-- ③c 命中：压缩后继续循环（左回环总线 → 回 ④ 左缘） -->
-          <path class="loop" d="M85,798 L34,798"/>
-          <text class="lbl" x="93" y="790">命中</text>
-          <path class="loop" d="M34,798 L34,270 L60,270" marker-end="url(#ahc2)"/>
-          <text class="lbl2" x="34" y="985">↩ 回到循环体开头</text>
-          <!-- ③c 未命中：直接回 ④（右内回边） -->
-          <path class="loop" d="M255,798 L300,798 L300,270 L280,270" marker-end="url(#ahc2)"/>
-          <text class="lbl" x="258" y="830">未命中</text>
-          <!-- ⑦ → 沙箱说明 -->
-          <line x1="280" y1="622" x2="330" y2="622" marker-end="url(#ah2)"/>
-        </svg>
-
-        <div class="fnode" data-node="c-ui" style="left:190px;top:4px;width:180px"   id="fn-c-ui"><div class="t">① 网页输入</div><div class="s mono">POST /api/run → spawn codex exec</div></div>
-        <div class="fnode" data-node="c-server" style="left:190px;top:76px;width:180px"  id="fn-c-server"><div class="t">② exec 受理</div><div class="s mono">exec/lib.rs run_main → run_turn</div><span class="cnt" id="cnt-c-server"></span></div>
-        <div class="fnode" data-node="c-precompact" style="left:60px;top:150px;width:220px" id="fn-c-precompact"><div class="t">③ 预采样压缩检查</div><div class="s mono">turn.rs:179-221 / fn:1298</div></div>
-        <div class="fnode" data-node="c-loop" style="left:60px;top:238px;width:220px" id="fn-c-loop"><div class="t">④ turn 开始记录</div><div class="s mono">机制 loop:426 · 事件不计内部迭代</div><span class="cnt" id="cnt-c-loop"></span></div>
-        <div class="fnode" data-node="c-history" style="left:60px;top:326px;width:220px" id="fn-c-history"><div class="t">⑤ 历史 / 请求边界</div><div class="s mono">clone_history:515 → build_prompt:1583</div><span class="cnt" id="cnt-c-history"></span></div>
-        <div class="fnode" data-node="c-llm" style="left:60px;top:414px;width:220px" id="fn-c-llm"><div class="t">⑥ LLM 采样</div><div class="s mono">sampling:2519 · retries:1647 · HTTP/WS</div><span class="cnt" id="cnt-c-llm"></span></div>
-        <div class="fdia" data-node="c-decide2" style="left:85px;top:502px" id="fn-c-decide2"><div class="shape"></div><div class="inner"></div><div class="txt">有工具调用?</div></div>
-        <div class="fnode" data-node="c-tool" style="left:60px;top:590px;width:220px"  id="fn-c-tool"><div class="t">⑦ 流内工具 · 收割结果</div><div class="s mono">stream_events_utils:315 · drain:2472</div><span class="cnt" id="cnt-c-tool"></span></div>
-        <div class="fdia" data-node="c-decide" style="left:85px;top:678px" id="fn-c-decide"><div class="shape"></div><div class="inner"></div><div class="txt">需要跟进?</div></div>
-        <div class="fdia" data-node="c-compact" style="left:85px;top:766px" id="fn-c-compact"><div class="shape"></div><div class="inner"></div><div class="txt">③c 中途压缩?</div><span class="cnt" id="cnt-c-compact"></span></div>
-        <div class="fnode note" data-node="c-sandbox" style="left:330px;top:590px;width:180px" id="fn-c-sandbox"><div class="t">沙箱 · 审批</div><div class="s mono">exec/lib.rs:571 默认 Never · 例外:758</div></div>
-        <div class="fnode" data-node="c-stop" style="left:330px;top:678px;width:180px" id="fn-c-stop"><div class="t">stop hooks</div><div class="s mono">turn.rs:653 · 可继续而非保证 break</div></div>
-        <div class="fnode note" data-node="c-postcompact" style="left:556px;top:854px;width:128px" id="fn-c-postcompact"><div class="t">turn 后压缩</div><div class="s mono">turn.rs:713 · 条件性收尾机制</div></div>
-        <div class="fnode done" data-node="c-done" style="left:556px;top:238px;width:128px" id="fn-c-done"><div class="t">⑧ turn / 进程结束</div><div class="s mono">turn.rs:793 · tasks/mod.rs:812</div><span class="cnt" id="cnt-c-done"></span></div>
         </div>
       </div></div>
     </div>
@@ -492,8 +402,8 @@
       <div class="colhead">节点详情</div>
       <div id="nodeTitle">…</div>
       <div class="tabs">
-        <div class="tab on" data-tab="records">运行记录</div>
-        <div class="tab" data-tab="doc">节点说明</div>
+        <div class="tab" data-tab="records">运行记录</div>
+        <div class="tab on" data-tab="doc">节点说明</div>
       </div>
       <div id="nodePanel"></div>
     </div>
@@ -516,7 +426,9 @@
 <script src="/vendor/marked.js"></script>
 <script src="/vendor/purify.js"></script>
 <script src="/markdown.js"></script>
+<script src="/flows.js"></script>
 <script>
+for (const h of ["opencode", "codex"]) document.getElementById(h === "codex" ? "flowCodex" : "flowOpencode").innerHTML = HarnessFlows.render(h)
 /* ═══════════ 工具函数 ═══════════ */
 const escapeHtml = (s) => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML }
 const now = () => new Date().toLocaleTimeString("zh-CN") + "." + String(Date.now() % 1000).padStart(3, "0")
@@ -573,30 +485,14 @@ function bump(id) {
 
 /* ═══════════ 节点记录存储 + 双 tab 面板 ═══════════ */
 let harness = "opencode"          // 当前查看的 harness（切换按钮）
-const NAMES = {
-  opencode: {
-    ui: "① 网页输入", server: "② Server 受理", loop: "③ runLoop / 消息记录",
-    decide: "判断 · 可退出循环?",
-    subflow1: "③b1 SubtaskPart?", subflow2: "③b2 有压缩任务?", subflow3: "③b3 上下文溢出?",
-    llm: "④ LLM 调用", decide2: "判断 · 模型请求工具?",
-    tool: "⑤ 工具调度", perm: "⑥ 权限门",
-    exec: "⑦ 执行 · 落库", done: "⑨ 会话结束", sub: "⑧ 子代理",
-  },
-  codex: {
-    "c-ui": "① 网页输入", "c-server": "② exec 受理", "c-precompact": "③ 预采样压缩检查",
-    "c-loop": "④ turn 开始记录", "c-history": "⑤ 历史 / 请求边界", "c-llm": "⑥ LLM 采样",
-    "c-decide2": "判断 · 有工具调用?", "c-tool": "⑦ 流内工具 · 收割结果",
-    "c-decide": "判断 · 需要跟进?", "c-compact": "③c 中途压缩?",
-    "c-sandbox": "沙箱 · 审批", "c-stop": "stop hooks", "c-postcompact": "turn 后压缩", "c-done": "⑧ turn / 进程结束",
-  },
-}
+const NAMES = Object.fromEntries(Object.entries(HarnessFlows.graphs).map(([h, graph]) => [h, Object.fromEntries(graph.nodes.map(n => [n.id, n.title]))]))
 const nodeNames = () => NAMES[harness]
 const eventsByHarness = { opencode: [], codex: [] }   // 切换 harness 时回放用
 const rootByHarness = { opencode: null, codex: null }
 let currentRunID = null
 const store = {}              // nodeId → [{seq,time,title,meta,kind,data}]
 let selectedNode = "llm"      // 默认看 LLM 调用明细
-let activeTab = "records"
+let activeTab = "doc"
 let currentEvent = null
 let llmRevision = 0
 const openRecords = new Set()
@@ -627,7 +523,7 @@ let lastFinishInfo = null   // 最后一次 assistant finish 信息，用于「�
 
 function selectNode(id) {
   selectedNode = id
-  document.querySelectorAll(".fnode,.fdia").forEach(e => {
+  document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(e => {
     e.classList.toggle("selected", e.dataset.node === id)
     if (e.dataset.node === id) e.classList.remove("unread")   // 清除"有新记录"圆点
   })
@@ -635,7 +531,7 @@ function selectNode(id) {
     `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} 条记录</span>`
   renderPanel()
 }
-document.querySelectorAll(".fnode,.fdia").forEach(el => el.onclick = () => { setView("details", true); selectNode(el.dataset.node) })
+document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(el => el.onclick = () => { setView("details", true); selectNode(el.dataset.node) })
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   activeTab = t.dataset.tab
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t))
@@ -648,7 +544,10 @@ function renderRecords() {
   document.getElementById("nodeTitle").innerHTML =
     `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} 条记录</span>`
   const panel = document.getElementById("nodePanel")
-  if (!list.length) { panel.innerHTML = `<div class="empty">暂无记录</div>`; return }
+  if (!list.length) {
+    panel.innerHTML = `<div class="empty">暂无运行记录。可切换「节点说明」了解这一步。</div>`
+    return
+  }
   panel.innerHTML = ""
   for (const rec of list) {
     const div = document.createElement("div"); div.className = "rec"
@@ -883,7 +782,7 @@ let followTranscript = true
 transcript.addEventListener("scroll", () => { followTranscript = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 72 })
 let currentSession = null
 const sessionParents = new Map(), pendingSessionEvents = [], pendingDeltas = new Map()
-const messageRoles = new Map(), pendingMessageText = new Map()
+const messageRoles = new Map(), pendingMessageText = new Map(), codexThreadParents = new Map(), codexToolNodes = new Map()
 const toolStates = new Map(), codexItems = new Map(), terminalSessions = new Set(), sessionErrors = new Map()
 const assistantSnapshots = new Map(), seenPartMarkers = new Set(), seenLlmRequests = new Set(), seenEventIDs = new Set()
 
@@ -974,7 +873,7 @@ function showPerm(p) {
     `权限类型：<b>${escapeHtml(p.permission)}</b>　匹配：<code>${escapeHtml((p.patterns || []).join(", "))}</code>` +
     (p.tool ? `<br>工具调用 callID <code>${escapeHtml(p.tool.callID)}</code>` : "")
   document.getElementById("permMeta").textContent = JSON.stringify(p.metadata ?? {}, null, 2)
-  permModal.classList.add("show"); pulse("perm", 60000)
+  permModal.classList.add("show"); pulse("sandbox", 60000)
 }
 permModal.querySelectorAll("button[data-reply]").forEach(btn => btn.onclick = async () => {
   if (!pendingPerm) return
@@ -985,7 +884,7 @@ permModal.querySelectorAll("button[data-reply]").forEach(btn => btn.onclick = as
       body: JSON.stringify({ requestID: request.id, reply }) })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (harness !== target) return
-    addRecord("perm", `本地答复请求已接受: ${reply}`, "API 接受请求，实际工具是否恢复以直接事件为准。", "json", { requestID: request.id, reply })
+    addRecord("sandbox", `本地答复请求已接受: ${reply}`, "API 接受请求，实际工具是否恢复以直接事件为准。", "json", { requestID: request.id, reply })
     if (pendingPerm?.id === request.id) pendingPerm = null
   } catch (err) {
     if (harness !== target) return
@@ -1075,13 +974,14 @@ function captureLlmEvent(evt) {
     const tools = Array.isArray(p.tools) ? p.tools : []
     const meta = `${child ? "已知子会话 · " : ""}客户端捕获边界，不计内部迭代 · model=${escapeHtml(p.model ?? "?")}<br>${codex ? "instructions 字段（不是全部指令）" : "system 字段"} ${escapeHtml(p.systemChars ?? "?")} 字符 · ${codex ? "input" : "messages"} ${escapeHtml(p.messages ?? "?")} 项 · tools ${Array.isArray(p.tools) ? tools.length + " 个" : "未随此请求传输／可能继承"}${p.toolsLocation ? " · " + escapeHtml(p.toolsLocation) : ""}<br>${tools.map(t => `<span class="chip">${escapeHtml(typeof t === "string" ? t : jsonText(t))}</span>`).join("")}<br><span class="waiting">等待响应</span>`
     addRecord(node, `#${p.index} ${p.model ?? "?"}`, meta, "llm", { index: p.index, requestSummary: p }, "boundary")
+    addRecord(codex ? "c-context" : child ? "sub" : "loop", `准备模型输入 #${p.index}`, "本次请求的材料摘要；完整请求在「调用模型」查看。", "json", p, "boundary")
     if (codex) {
-      pulse("c-history"); bump("c-history")
-      addRecord("c-history", `捕获请求边界 #${p.index}`, "非 clone_history / build_prompt 函数直接 trace；WS 请求可能是增量。", "llm", { index: p.index, requestSummary: p }, "boundary")
+      if (p.sessionID && codexThreadParents.has(p.sessionID))
+        addRecord("c-sub", `子任务调用模型 #${p.index}`, "由明确的委派线程关系关联。", "json", p, "boundary")
     }
   } else {
     pulse(node, 1200)
-    for (const id of codex ? [node, "c-history"] : [node]) {
+    for (const id of [node]) {
       const rec = store[id]?.find(r => r.kind === "llm" && r.data.index === p.index)
       if (!rec) continue
       rec.data.responseEvent = evt
@@ -1145,12 +1045,12 @@ function processEvent(evt) {
 
     /* ── opencode 真实事件 ── */
     case "session.created":
-      pulse("server")
-      addRecord("server", "会话创建 " + (p.info?.id ?? ""), `agent=${p.info?.agent ?? "-"} model=${p.info?.model?.id ?? "-"}`, "json", p)
+      pulse(child ? "sub" : "server")
+      addRecord(child ? "sub" : "server", (child ? "子会话创建 " : "会话创建 ") + (p.info?.id ?? ""), `parentID=${p.info?.parentID ?? "-"}`, "json", p)
       log(type, "会话创建 " + (p.info?.id ?? ""), "ok"); break
     case "session.updated":
-      pulse("server")
-      if (p.info?.model) addRecord("server", "会话配置确定", `agent=${p.info.agent ?? "-"} model=${p.info.model?.id ?? "-"}（${p.info.model?.providerID ?? "-"}）`, "json", p)
+      pulse(child ? "sub" : "server")
+      if (p.info?.model) addRecord(child ? "sub" : "server", "会话配置更新", `agent=${p.info.agent ?? "-"} model=${p.info.model?.id ?? "-"}（${p.info.model?.providerID ?? "-"}）`, "json", p)
       log(type, "会话更新" + (child ? "（子代理）" : "")); break
     case "message.updated":
       if (p.info?.role === "assistant") {
@@ -1168,7 +1068,7 @@ function processEvent(evt) {
         if (info.finish && info.finish !== previous?.finish)
           addRecord(child ? "sub" : "decide", `观测 finish=${info.finish}`, "不能只用 finish 推定 break：还需本地工具 parts 和 latest user 归属；错误也不总写 finish=error。", "json", info)
       } else if (p.info?.role === "user") {
-        addRecord("server", "user 消息落库", "createUserMessage（prompt.ts:1057）", "json", p.info)
+        addRecord(child ? "sub" : "server", "user 消息记录", "已持久化的消息快照；也可能是压缩后的内部续接消息。", "json", p.info)
       }
       break
     case "message.part.delta": {
@@ -1186,19 +1086,14 @@ function processEvent(evt) {
       if (!part) break
       const key = `${sessionID(p)}:${part.id}`
       if (part.type === "tool") {
-        const node = child ? "sub" : "tool"
+        const node = child || part.tool === "task" ? "sub" : "tool"
         const callKey = `${sessionID(p)}:${part.callID ?? part.id}`
         const previous = toolStates.get(callKey), st = part.state
         if (!previous) {
           bump(node); pulse(node)
-          addRecord(node, `工具 ${part.tool}`, "按 session + callID 去重；完整 part 状态保留。", "json", part)
+          addRecord(node, part.tool === "task" ? "task 工具调用" : `工具 ${part.tool}`, "按调用标识去重；task 工具快照不能区分显式待办与模型委派。", "json", part)
         } else updateRec(node, r => (r.data?.callID ?? r.data?.id) === (part.callID ?? part.id) && r.data?.sessionID === part.sessionID, part)
         toolStates.set(callKey, part)
-        if (part.tool === "task" && previous) updateRec("sub", r => r.title === "普通 task 工具调用" && r.data?.sessionID === part.sessionID && (r.data?.callID ?? r.data?.id) === (part.callID ?? part.id), part)
-        if (part.tool === "task" && !previous) {
-          pulse("sub")
-          addRecord("sub", "普通 task 工具调用", "tool/task.ts execute 创建/复用子会话；不是 preflight SubtaskPart 分支。只有 parentID / task metadata 已知的后代归为子会话。", "json", part)
-        }
         if ((st?.status === "completed" || st?.status === "error") && previous?.state?.status !== st.status) {
           const endNode = child ? "sub" : "exec"
           pulse(endNode); bump(endNode)
@@ -1208,9 +1103,9 @@ function processEvent(evt) {
       } else if (part.type === "compaction" || part.type === "subtask") {
         if (!seenPartMarkers.has(key)) {
           seenPartMarkers.add(key)
-          const node = child ? "sub" : part.type === "compaction" ? "subflow2" : "subflow1"
+          const node = child ? "sub" : part.type === "compaction" ? "schedule" : "subflow1"
           pulse(node); bump(node)
-          addRecord(node, part.type === "compaction" ? "compaction 请求标记" : "显式 SubtaskPart 标记", "标记不等于分支已执行或工作已完成；压缩 process 本身可能调用模型。", "json", part)
+          addRecord(node, part.type === "compaction" ? "compaction 请求标记" : "显式 SubtaskPart 标记", "持久化标记不证明已经取出待办、执行子任务或完成压缩，也不确定标记的创建入口。", "json", part)
         }
       } else if (part.type === "text" || part.type === "reasoning") {
         partVocab[key] = part.type
@@ -1229,8 +1124,8 @@ function processEvent(evt) {
       if (p.status?.type === "busy") { if (!child) setRun("busy"); terminalSessions.delete(p.sessionID); pulse(child ? "sub" : "loop", 3000) }
       if (p.status?.type === "idle") endSession(p, child)
       if (p.status?.type === "retry") {
-        pulse("llm")
-        addRecord("llm", "模型调用失败 → 退避重试", "provider 调用失败后的 retry（不进内务检查分支）", "json", { 输入_attempt: p.status.attempt, message: p.status.message })
+        pulse(child ? "sub" : "llm")
+        addRecord(child ? "sub" : "llm", "模型调用失败 → 退避重试", "processor 内重试；保留 attempt、action、next 等原始状态。", "json", p)
         log(type, "重试中… " + (p.status.message ?? ""), "warn")
       }
       log(type, "status=" + (p.status?.type ?? "?"))
@@ -1238,7 +1133,7 @@ function processEvent(evt) {
     case "session.idle":
       endSession(p, child); break
     case "session.compacted":
-      pulse(child ? "sub" : "subflow2"); bump(child ? "sub" : "subflow2")
+      pulse(child ? "sub" : "subflow2")
       addRecord(child ? "sub" : "subflow2", "session.compacted 报告压缩完成", "报告完成，不反推主动/溢出/手动分支。", "json", p)
       log(type, "会话压缩完成", "warn"); break
     case "session.error":
@@ -1249,16 +1144,17 @@ function processEvent(evt) {
       addRecord(child ? "sub" : "done", "会话错误证据（可能可恢复）", "不由 context 字符串推定主动 overflow 分支，也不立即判定 run 失败。", "json", p)
       log(type, "错误", "warn"); break
     case "permission.asked":
-      pulse("perm", 60000); bump("perm")
-      addRecord("perm", `询问: ${p.permission}`, `匹配 ${escapeHtml((p.patterns || []).join(", "))} · 工具已挂起等待答复（Deferred）`, "json", p)
+      pulse("sandbox", 60000); bump("sandbox")
+      addRecord("sandbox", `${child ? "子会话 · " : ""}询问: ${p.permission}`, `匹配 ${escapeHtml((p.patterns || []).join(", "))} · 等待 reply；不表示所有工具统一经过审批`, "json", p)
       showPerm(p); log(type, `权限询问 ${p.permission}`, "perm"); break
     case "permission.replied":
-      pulse("perm")
+      pulse("sandbox")
+      addRecord("sandbox", `权限答复: ${p.reply}`, `requestID=${p.requestID} · sessionID=${p.sessionID}`, "json", p)
       if (pendingPerm && pendingPerm.id === p.requestID) { permModal.classList.remove("show"); pendingPerm = null }
       log(type, `权限答复 ${p.reply}`, "perm"); break
     case "file.edited":
-      pulse("exec")
-      addRecord("exec", "文件被修改", "", "json", p)
+      pulse(child ? "sub" : "exec")
+      addRecord(child ? "sub" : "exec", "文件被修改", p.sessionID ? `sessionID=${p.sessionID}` : "工作目录文件变更事件；未携带工具调用关联 ID。", "json", p)
       log(type, "file.edited", "ok"); break
     case "session.diff": break
     case "server.connected": break
@@ -1280,11 +1176,20 @@ function codexItem(item, done) {
   const textItem = item.type === "agent_message" || item.type === "reasoning"
   const errorItem = item.type === "error"
   const toolItem = ["command_execution", "file_change", "mcp_tool_call", "collab_tool_call", "web_search"].includes(item.type)
-  const node = textItem ? "c-llm" : errorItem ? "c-done" : toolItem ? "c-tool" : "c-server"
+  const childItem = item.type === "collab_tool_call"
+  if (childItem && done && item.tool === "spawn_agent" && item.status === "completed" && item.sender_thread_id) {
+    for (const threadID of item.receiver_thread_ids ?? []) {
+      if (threadID !== item.sender_thread_id) codexThreadParents.set(threadID, item.sender_thread_id)
+    }
+  }
+  const node = textItem || errorItem || item.type === "todo_list" ? "c-feedback" : childItem ? "c-sub" : toolItem ? "c-tool" : "c-server"
+  const labels = { agent_message: "模型回答", reasoning: "推理摘要", command_execution: "命令执行", file_change: "文件修改", mcp_tool_call: "外部工具调用", collab_tool_call: "子任务管理", web_search: "网页搜索", todo_list: "计划更新", error: "错误报告" }
   if (!previous) {
     if (toolItem) bump(node)
-    addRecord(node, `item ${item.type}`, "直接 exec item 报告；完整原始 item 保留，completed 不保证任务正确。", "json", item)
+    addRecord(node, labels[item.type] ?? item.type, "原始活动报告；状态与完整内容保留在详情。", "json", item)
   } else updateRec(node, r => (r.data?.id ?? r.data?.call_id) === key, item)
+  if (done && toolItem && !previous?.done)
+    addRecord("c-feedback", `${labels[item.type] ?? item.type}返回结果`, "返回结果或状态，用于后续处理。", "json", item)
   let b = toolCards["cx-" + key]
   if (!b) b = toolCards["cx-" + key] = addMsg(textItem ? item.type === "reasoning" ? "reasoning" : "assistant" : errorItem ? "error" : "tool",
     textItem ? item.type === "reasoning" ? "思考摘要" : "助手" : "工具调用")
@@ -1307,11 +1212,23 @@ function handleCodexEvent(evt) {
   switch (type) {
     case "codex.trace": {
       const raw = p.event?.payload ?? {}
-      const node = raw.type?.startsWith("compaction_") ? "c-compact"
-        : raw.type?.startsWith("tool_call_") ? "c-tool" : null
+      const agentKinds = ["spawn_agent", "assign_agent_task", "send_message", "wait_agent", "close_agent"]
+      const kind = raw.kind?.type ?? raw.kind
+      if (raw.type === "agent_result_observed" && raw.child_thread_id && raw.parent_thread_id)
+        codexThreadParents.set(raw.child_thread_id, raw.parent_thread_id)
+      if (raw.type === "tool_call_started" && raw.tool_call_id)
+        codexToolNodes.set(raw.tool_call_id, agentKinds.includes(kind) ? "c-sub" : !kind || kind === "other" ? "c-delegate" : "c-tool")
+      const node = raw.type?.startsWith("compaction_") ? "c-context"
+        : raw.type === "agent_result_observed" ? "c-sub"
+        : raw.type?.startsWith("code_cell_") ? "c-tool"
+        : raw.type?.startsWith("tool_call_") ? codexToolNodes.get(raw.tool_call_id) ?? "c-delegate" : null
       if (node) {
         pulse(node)
-        addRecord(node, `原生 trace: ${raw.type}`, "直接 rollout trace 事件；不推断压缩发生在 turn 前、中或后，也不把运行时输出当作模型已收到的原文。", "json", p)
+        const titles = { compaction_request_started: "请求整理历史", compaction_request_completed: "返回整理结果", compaction_request_failed: "历史整理失败", compaction_installed: "历史已更新", tool_call_started: "工具调用开始", tool_call_runtime_started: "工具开始执行", tool_call_runtime_ended: "工具执行结束", tool_call_ended: "工具结果返回", code_cell_started: "函数运行开始", code_cell_initial_response: "函数返回结果或状态", code_cell_ended: "函数运行结束", agent_result_observed: "子任务结果回传" }
+        addRecord(node, titles[raw.type] ?? raw.type, raw.type.startsWith("compaction_")
+          ? "历史整理记录；原始事件保留其提供的信息。"
+          : node === "c-delegate" ? "工具生命周期已观测，但处理器类别未确认；不推断普通工具或子任务分支。"
+          : "直接工具生命周期事件；运行时结果与下轮模型请求分别保留。", "json", p)
       }
       break
     }
@@ -1323,18 +1240,20 @@ function handleCodexEvent(evt) {
       setRun("busy")
       pulse("c-server")
       addRecord("c-server", "exec 进程启动", "启动边界报告，不是 run_turn 函数 trace。", "json", p)
+      if (p.sandbox !== undefined || p.approvalPolicy !== undefined)
+        addRecord("c-sandbox", "本次启动配置", "配置记录；不是某个工具的审批结果。", "json", { sandbox: p.sandbox, approvalPolicy: p.approvalPolicy, args: p.args }, "boundary")
       log(type, p.cmd ?? "spawn"); break
     case "codex.thread.started":
       currentSession = rootByHarness.codex = p.thread_id
       document.getElementById("sessionLabel").textContent = "线程 " + String(p.thread_id).slice(-8)
-      pulse("c-server"); bump("c-server")
+      pulse("c-server")
       addRecord("c-server", "线程启动 " + p.thread_id,
         "直接 thread.started 事件；源码路径 exec run_main → RegularTask → run_turn，非函数调用观测。", "json", p)
       log(type, "thread " + p.thread_id, "ok"); break
     case "codex.turn.started":
-      setRun("busy"); pulse("c-loop", 4000); bump("c-loop")
-      addRecord("c-loop", "turn.started（turn 开始计数）",
-        "不证明预采样压缩已执行，不计内部 loop 迭代或采样次数。", "json", p)
+      setRun("busy"); pulse("c-server", 4000); bump("c-server")
+      addRecord("c-server", "开始处理任务",
+        "任务启动记录；后续模型与工具可以往返多次。", "json", p)
       log(type, "turn 开始", "ok"); break
     case "codex.item.started": codexItem(p.item, false); break
     case "codex.item.updated": codexItem(p.item, false); break
@@ -1352,6 +1271,7 @@ function handleCodexEvent(evt) {
       log(type, "turn 失败", "warn"); break
     case "codex.error":
       addError(p.message ?? JSON.stringify(p))
+      addRecord("c-feedback", "运行错误报告", "原始错误事件；任务终态单独记录。", "json", p)
       log(type, p.message ?? "error", "warn"); break
     case "codex.proc.exit":
       if (p.aborted) setRun("interrupted")
@@ -1369,49 +1289,69 @@ const SOURCE_PINS = {
   codex: { tag: "rust-v0.160.0", commit: "a956835d020762cb2b570053af06f643a11c0ecc", repo: "openai/codex", root: "codex-rs/" },
   opencode: { tag: "v1.18.34", commit: "aec0b9a6d8898f68f923aaf08b7306d931fd9d76", repo: "anomalyco/opencode", root: "packages/opencode/src/" },
 }
-function sourceDoc(h, explanation, anchors) {
+function sourceDoc(h, lesson, anchors, technical = "") {
   const pin = SOURCE_PINS[h]
-  return `<h3 title="基于固定版本源码，不代表本次实际执行">机制说明</h3><p>${explanation}</p><details class="raw"><summary>源码定位 · ${pin.tag}</summary><p><code title="${pin.commit}">${pin.commit.slice(0, 10)}</code></p>` + anchors.map(([file, symbol, lines]) => {
+  return `<h3>这一步做什么</h3><p>${escapeHtml(lesson.what)}</p><h3>举个例子</h3><p class="lesson-example">${escapeHtml(lesson.example)}</p><h3>接下来</h3><p>${escapeHtml(lesson.next)}</p><details class="raw"><summary>源码与运行细节 · ${pin.tag}</summary>${technical ? `<p>${escapeHtml(technical)}</p>` : ""}<p><code title="${pin.commit}">${pin.commit.slice(0, 10)}</code></p>` + anchors.map(([file, symbol, lines]) => {
     const range = String(lines).split("-")
     const url = `https://github.com/${pin.repo}/blob/${pin.commit}/${pin.root}${file}#L${range[0]}${range[1] ? "-L" + range[1] : ""}`
     return `<p><a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(file)}:${lines} · ${escapeHtml(symbol)}</a></p>`
   }).join("") + `</details>`
 }
-const ocDoc = (text, anchors) => sourceDoc("opencode", text, anchors)
-const cxDoc = (text, anchors) => sourceDoc("codex", text, anchors)
+const ocDoc = (lesson, anchors, technical) => sourceDoc("opencode", lesson, anchors, technical)
+const cxDoc = (lesson, anchors, technical) => sourceDoc("codex", lesson, anchors, technical)
 const turnAnchor = (symbol, lines) => ["core/src/session/turn.rs", symbol, lines]
+const LESSONS = {
+  start: { what: "给智能体一个目标，同时说明限制和完成标准。这些要求会成为后续处理的依据。", example: "“修复登录接口，并运行相关测试。只修改当前项目。”", next: "框架准备项目环境、模型和可用工具。" },
+  context: { what: "整理模型本次可用的信息：任务要求、项目指令、已有对话和工具结果。这些信息构成当前任务的工作记忆。跨任务记忆还需要额外的保存与读取机制。", example: "上一轮读到了登录代码，并发现一个失败测试；这轮把这些信息一起提供给模型。", next: "把当前可用材料组织成模型请求。" },
+  model: { what: "模型根据上下文生成回答，也可以提出一个工具调用：指定工具名称和参数。真正执行工具的是智能体框架。", example: "模型提出“读取登录模块”，或者“运行登录相关的测试”。", next: "识别输出中的工具调用；需要工具时安排执行，普通回答则被保留。" },
+  toolChoice: { what: "识别输出中是否有需要客户端派发的工具动作。结构化工具调用才会进入对应处理器；普通文字和服务端已执行的动作不等于本地派发。", example: "“请运行测试”作为文字不会启动命令；对应的命令工具调用才会交给执行器。", next: "需要派发就选择处理器；其他输出也会被保存，随后判断是否继续。" },
+  delegation: { what: "按职责区分子任务管理与其他工具。这个菱形归并不同处理器的类别，不表示源码先经过一个统一的判断函数。", example: "父智能体可创建检查任务，也可向已有智能体发送消息或等待结果。", next: "进入对应处理器。权限检查发生在具体实现中，管理调用也不一定启动新的智能体循环。" },
+  child: { what: "这里收起子任务管理的内部步骤。子智能体可以有自己的上下文和模型、工具循环；创建、发送、等待等管理动作的返回，不都代表子任务完工。", example: "创建调用返回一个任务标识；等待调用可能超时，只返回当前状态。", next: "管理结果、错误或进度回到父流程；仍在运行的子任务可在之后继续提供结果。" },
+  tool: { what: "框架把参数交给具体工具实现，在相应环境中完成动作。工具常以函数接口提供，可能读写文件、执行命令，也可能调用外部服务。", example: "测试工具运行命令，返回失败信息；读取工具返回文件内容。", next: "把结果或错误记录下来，让后续处理能够使用。模型还在输出时，工具也可能已经开始执行。" },
+  feedback: { what: "逐步保存模型回答、工具结果以及错误或拒绝原因。下一次请求可使用这些新信息。这个框按职责汇总记录工作，实际保存发生在输出和执行期间。", example: "测试报错指出某个参数校验缺失；模型下一轮根据这条结果修改代码。", next: "按本轮处理结果决定继续、整理历史或收尾。图不是输出与工具逐一串行执行的时间线。" },
+  compact: { what: "历史过长时，把旧内容整理成较短表示，或者调整可用上下文。目标是让有限的输入容量留给当前仍重要的信息。", example: "多轮命令输出占用了大量空间，系统保留目标、关键结论和当前进度，减少旧细节。", next: "使用整理后的历史重新准备上下文。这是工作记忆维护的一部分。" },
+  end: { what: "本次处理结束，界面保留回答、文件变化和运行记录。结束可能是正常完成，也可能是失败或中断。", example: "代码已修改并报告测试结果；或者执行被拒绝，任务提前停止。", next: "用户检查产出和验证结果，决定是否继续提出新要求。" },
+}
 const DOCS = {
 opencode: {
-  ui: ocDoc("本地 UI 提交 /api/run；viz.run 仅证明提交。上游 prompt 写入 user 消息后进入 V1 loop；具体模型/会话由 API 与事件确认。", [["session/prompt.ts", "prompt / createUserMessage", "1052-1081"]]),
-  server: ocDoc("prompt 写 user 消息并进入 runLoop。session.created/updated 的 parentID 维护归属；不同 sessionID 不能自动当作子代理。", [["session/prompt.ts", "prompt / runLoop", "1052-1081"], ["tool/task.ts", "TaskTool execute / child session", "119-224"]]),
-  loop: ocDoc("V1 runLoop 重载历史并先检查退出，再处理显式子任务、压缩和溢出。新 assistant 是消息观测，不能精确计数循环；HTTP 重试也不等于新增迭代。", [["session/prompt.ts", "runLoop", "1081-1168"], ["session/llm.ts", "stream / streamText", "280"]]),
-  decide: ocDoc("退出需要终止性 finish、属于 latest user，且不存在符合条件的本地 tool part。检查的不只是 pending：completed 本地工具也可符合；排除 providerExecuted 与 interrupted error。只看 finish 不能证明 break。", [["session/prompt.ts", "runLoop exit predicate", "1100-1129"], ["session/processor.ts", "process / step-finish", "457-470"]]),
-  subflow1: ocDoc("preflight tasks.pop 处理显式 SubtaskPart 并调用 handleSubtask。不是普通 task 工具留下的必经阶段；marker 不证明 handleSubtask 已执行。", [["session/prompt.ts", "runLoop / tasks.pop", "1142-1147"], ["session/prompt.ts", "handleSubtask", "255"]]),
-  subflow2: ocDoc("compaction part 是请求标记；compaction.process 会做模型摘要工作，不是本轮不调模型。summary assistant 表示摘要工作，session.compacted 报告完成。此路由是 V1。", [["session/prompt.ts", "runLoop / compaction.process", "1149-1159"], ["session/compaction.ts", "process", "319-448"]]),
-  subflow3: ocDoc("主动溢出检查使用历史 token 与模型限制；reactive overflow 是另一条路径。错误字符串含 context 不能证明主动检查命中，错误可能恢复。", [["session/prompt.ts", "runLoop proactive overflow", "1161-1168"], ["session/prompt.ts", "runLoop reactive overflow", "1320"], ["session/overflow.ts", "isOverflow", "10"]]),
-  llm: ocDoc("装配 system/messages/tools 后进入 llm streamText；默认没有 stopWhen，但存在重试，因此 HTTP 请求数不等于 runLoop 迭代。捕获 API 边界内容不代表服务端最终提示词或完整推理。", [["session/prompt.ts", "runLoop / prompt assembly", "1226-1286"], ["session/llm.ts", "stream / streamText", "280"]]),
-  decide2: ocDoc("响应中的工具块是解析证据，不证明 execute 被调用。工具通过 streamText 执行桥接在流期间处理，而非 llm.response 后才开始。无工具摘要也不能证明循环退出。", [["session/tools.ts", "resolve / execute bridge", "59-132"], ["session/processor.ts", "process / tool events", "216-315"]]),
-  tool: ocDoc("工具装配与执行桥接负责解码参数、权限和调用；processor 更新 tool part。按 session + callID 去重并保留完整状态，不按每次 part 更新增加工具次数。", [["session/tools.ts", "resolve / execute bridge", "59-132"], ["session/processor.ts", "process / ensureToolCall", "216-315"]]),
-  perm: ocDoc("ask 按规则 allow / deny / ask 求值；询问事件挂起等待 reply。只有直接 permission.asked 才显示询问，不由工具名称推断审批分支。", [["permission/index.ts", "ask / reply", "67-166"]]),
-  exec: ocDoc("completeToolCall 保留 output、metadata、attachments 等完整结果。工具 completed 只报告工具终态；响应摘要不能证明精确历史写回，工具成功不等于任务正确。", [["session/processor.ts", "completeToolCall", "160"], ["session/processor.ts", "process / step-finish", "457-470"]]),
-  sub: ocDoc("普通 task execute 创建或复用子 session 并驱动子 prompt，与显式 handleSubtask 不同。仅由 parentID 或 task metadata sessionId/parentSessionId 确认 root 的后代；未知会话保留原始事件，归属明确后再转写。", [["tool/task.ts", "TaskTool execute / child session", "119-224"], ["tool/task.ts", "TaskTool execute / child prompt and result", "284-358"], ["session/prompt.ts", "handleSubtask", "255"]]),
-  done: ocDoc("runLoop 有多条收尾路径；prune 是 forked 工作。session.status idle 是 canonical 终态，session.idle 冗余；idle 只表示 ended，不表示成功。保留 error/abort，错误并不总写 finish=error。", [["session/prompt.ts", "runLoop termination / forked prune", "1288-1339"], ["session/status.ts", "set / idle publication", "39-47"], ["session/processor.ts", "process / step-finish", "457-470"]]),
+  ui: ocDoc(LESSONS.start, [["server/routes/instance/httpapi/handlers/session.ts", "prompt REST handler", "295-308"]]),
+  server: ocDoc({ what: "为任务建立会话，确定工作目录、模型、工具和权限。保存用户要求后，进入智能体处理循环。", example: "以当前项目为工作目录，启用读取、编辑和命令工具，按配置决定哪些操作需要确认。", next: "读取已有历史，准备第一次模型工作。" }, [["session/prompt.ts", "prompt", "1052-1071"], ["session/run-state.ts", "ensureRunning", "88-94"]]),
+  loop: ocDoc({ what: "读取压缩后仍可见的历史，找到最新用户要求、助手状态和待办。它们构成当前任务的工作记忆；项目指令与工具定义在调用模型前才进一步装配。", example: "读取上一轮的文件结果，检查最新要求是否已经得到回应。", next: "先检查请求是否已完成；未完成时取出待办，不直接调用模型。" }, [["session/prompt.ts", "history and task collection", "1088-1098"], ["session/prompt.ts", "late context assembly", "1226-1286"]], "filterCompactedEffect 后确定 latestUser/latestAssistant/latestFinished 和 tasks。消息快照不是循环次数；工作记忆不等于跨任务长期记忆。"),
+  decide: ocDoc({ what: "每轮读取历史后，检查最新请求是否已有可结束的回答。还要结合回答归属与本地工具记录，不能只看一条“完成”文字。", example: "上一条回答已经结束，但它不对应最新用户要求，仍需继续处理。", next: "已完成就退出；未完成先取出待办。此检查与调用模型后的处理结果是两处不同判断。" }, [["session/prompt.ts", "entry exit predicate", "1100-1129"]], "finish 存在且非 tool-calls/unknown，没有符合条件的本地工具 part，且 parentID 对应 latestUser 才 break。工具过滤排除 providerExecuted 及孤立中断。"),
+  subflow1: ocDoc({ what: "从已收集的待办中取出一项，区分指定子任务、压缩任务或没有待办。这里不是对所有任务重新排序。", example: "先前安排的摘要标记已成为待办，这一轮取出它并执行；指定子任务也有独立入口。", next: "指定任务执行后直接回循环头；压缩任务执行并检查返回结果；没有待办才检查容量。" }, [["session/prompt.ts", "tasks.pop and three paths", "1142-1168"]], "根据 tasks.pop() 得到的 part.type 分支。SubtaskPart 的观测只证明标记存在，不证明此处已取出或执行。"),
+  "pre-sub": ocDoc({ what: "执行已明确指定的子任务，并把管理调用的结果或错误写回父会话。这条入口无需让父模型先提出工具调用。", example: "已指定的检查任务返回结果，父会话写入对应记录。", next: "直接回到循环头重新读取历史，跳过本轮父模型调用及其后续处理判断。" }, [["session/prompt.ts", "handleSubtask", "255-449"], ["session/prompt.ts", "subtask then continue", "1144-1147"]], "handleSubtask 生成 finish=tool-calls 的助手记录，调用 TaskTool 并写回完成/错误。bypassAgentCheck=true 绕过该处代理检查；不等于绕过所有权限。仅有 command 时加合成 user 续接。仅凭 task 工具快照无法证明这条入口。"),
+  subflow2: ocDoc({ ...LESSONS.compact, next: "执行完成后检查压缩处理返回的结果，决定继续会话还是停止。" }, [["session/prompt.ts", "process existing compaction task", "1149-1159"], ["session/compaction.ts", "summary generation", "319-458"], ["session/compaction.ts", "completion", "552-556"]], "这里执行已取出的任务，可能另行调用摘要模型。创建标记在「安排压缩」；session.compacted 是完成报告，不能反推主动、溢出或手动入口。"),
+  "compact-result": ocDoc({ what: "检查压缩处理返回的结果。成功整理后可继续；摘要失败或处理再次要求压缩等情况可能要求停止。", example: "摘要完成并写回历史后，下一轮重新读取；摘要出错则停止会话处理。", next: "可继续直接回到历史读取；停止则退出循环，最终状态仍需结合错误与中断记录。" }, [["session/prompt.ts", "compaction stop or continue", "1149-1159"], ["session/compaction.ts", "summary error / compact stop", "450-458"], ["session/compaction.ts", "final stop or continue", "552-556"]], "compaction.process 返回 stop 时 break，否则 continue。完成报告本身不能证明此判断走了哪条分支。"),
+  subflow3: ocDoc({ what: "没有待办时，检查已完成消息反映的输入容量是否不足。需要维护时先安排压缩，而不是在这里立即生成摘要。", example: "多轮测试输出积累，容量检查要求创建一次历史整理任务。", next: "不足就创建压缩标记并回到循环头；容量允许才继续装配输入、调用模型。" }, [["session/prompt.ts", "proactive overflow schedules work", "1161-1168"]], "条件含 latestFinished、summary 与 compaction.isOverflow。只画无待办之后的主动检查；processor 返回 compact 是另一入口，见「本轮处理结果」。"),
+  schedule: ocDoc({ what: "保存一个压缩任务标记，让后续循环取出并处理。这一步只安排工作，不调用摘要模型。", example: "容量检查命中后，保存“需要整理历史”的标记，再回到历史读取。", next: "直接下一轮；取出该压缩待办时才进入执行压缩及其返回判断。" }, [["session/compaction.ts", "create marker", "559-582"], ["session/prompt.ts", "proactive create and continue", "1161-1168"], ["session/prompt.ts", "processor compact schedules work", "1319-1335"]], "create 写 user/compaction part。观测标记不确定它来自主动检查、溢出、手动请求或其他入口；徽标统计去重标记，不统计摘要完成或条件命中。"),
+  llm: ocDoc(LESSONS.model, [["session/prompt.ts", "model input", "1226-1286"], ["session/llm.ts", "streamText", "276-324"], ["session/processor.ts", "retry and outcomes", "641-695"]], "在这里前置装配工具与环境/指令，processor 处理流和重试。图中红线仅表示最终终止异常，捕获错误不等于走红线。标题/摘要/子会话请求也可能被捕获，请求数不是内部循环次数。"),
+  decide2: ocDoc(LESSONS.toolChoice, [["session/tools.ts", "execute bridge", "99-132"], ["session/processor.ts", "tool-call handling", "315-410"]]),
+  tool: ocDoc(LESSONS.tool, [["session/tools.ts", "execute bridge", "99-132"], ["session/processor.ts", "tool states", "216-410"]]),
+  delegate: ocDoc(LESSONS.delegation, [["tool/task.ts", "task execution", "119-224"], ["session/tools.ts", "tool implementation dispatch", "99-132"]]),
+  exec: ocDoc(LESSONS.feedback, [["session/processor.ts", "complete / fail tool", "160-204"], ["session/message-v2.ts", "feedback to model", "294-364"]], "历史在输出/执行期间逐步持久化，图中此节点集中表示反馈职责；file.edited 不能单独关联某个 callID。"),
+  sub: ocDoc(LESSONS.child, [["tool/task.ts", "child session / child prompt", "136-224"], ["tool/task.ts", "background and result", "284-358"]], "显式子任务与模型 task 工具共享 TaskTool。子会话关联依靠 parentID 或 task metadata；后台启动回传状态不代表子任务已全部完成。"),
+  sandbox: ocDoc({ what: "权限既会过滤可用工具，也在具体工具需要时检查。自动允许、拒绝和询问用户是不同结果，没有所有工具统一经过的审批门。工具按本地或外部服务边界执行。", example: "读取或编辑工具在相应动作前检查权限；需要确认时页面弹出询问并保存答复。", next: "工具按自身规则执行或返回拒绝信息。拒绝后继续还是停止，还取决于循环配置。" }, [["session/tools.ts", "tool-specific ask / dispatch", "81-132"], ["permission/index.ts", "ask and reply", "67-166"], ["tool/edit.ts", "ask before action", "102-111"], ["session/processor.ts", "continue_loop_on_deny", "190-204"]], "区域不是控制步骤。Asked/Replied 为直接事件，按询问计数；API 接受本地答复不证明工具恢复。独立 opencode serve 不等于完整 OS 沙箱，外部 MCP 边界由服务自身提供。continue_loop_on_deny 决定拒绝是否阻断处理。"),
+  outcome: ocDoc({ what: "模型和工具处理返回后，区分继续、安排压缩或结束。它与下一轮入口的“请求已完成”检查不同。", example: "工具结果需要模型解释时继续；处理器发现输入过长时安排压缩；终止结果则结束。", next: "继续回到历史读取；需压缩先创建标记再回循环头；结束退出会话处理。" }, [["session/processor.ts", "compact / stop / continue", "693-695"], ["session/prompt.ts", "structured output and processor outcomes", "1288-1335"]], "包括结构化输出成功/缺失的 break、processor stop、compact create 及普通 continue。continue 不代表下一轮一定调用模型，入口退出谓词会再检查。未观测内部返回值时不填造分支记录。"),
+  done: ocDoc(LESSONS.end, [["session/prompt.ts", "termination and prune", "1288-1339"], ["session/run-state.ts", "onIdle", "52-68"], ["session/status.ts", "idle events", "39-47"]], "idle 表示不再忙；界面保留失败/中断状态。任务是否正确还要依据测试和检查结果。"),
 },
 codex: {
-  "c-ui": cxDoc("本地 UI 提交 /api/run，启动 codex exec；模型、捕获方式与启动参数以 status / 直接事件为准，不假定走翻译代理。", [["exec/src/lib.rs", "run_main / approval setup", "571"], turnAnchor("run_turn / pre-sampling setup", "179-221")]),
-  "c-server": cxDoc("exec 驱动 run_turn；thread.started / proc.start 是生命周期事件，不能当作函数 trace。模型捕获可能来自 native-trace 或 translation-proxy。", [["exec/src/lib.rs", "run_main / approval setup", "571"], turnAnchor("run_turn", "163"), ["core/src/tasks/mod.rs", "task completion", "812"]]),
-  "c-precompact": cxDoc("run_turn 采样前有压缩检查，run_pre_sampling_compact 实现条件性压缩。turn.started 不证明检查已执行或分支命中；没有记录不证明跳过。", [turnAnchor("run_turn / pre-sampling compaction call", "179-221"), turnAnchor("run_pre_sampling_compact", "1298")]),
-  "c-loop": cxDoc("静态 loop 位于 run_turn；此节点 badge 仅计 turn.started，不是内部迭代。队列输入与上下文处理仍是源码机制，不能由开始事件宣称已完成。", [turnAnchor("run_turn / loop", "426")]),
-  "c-history": cxDoc("源码 clone_history 后 build_prompt；此节点仅归档请求边界，不是这两个函数的直接观测。WS previous_response_id 续接可只发送增量 input；报文项数不能推定全量逻辑历史。", [turnAnchor("run_turn / clone_history", "515"), turnAnchor("build_prompt", "1583")]),
-  "c-llm": cxDoc("try_run_sampling_request 处理模型流，外层有 retries；传输可为 HTTP 或 WebSocket。一次边界请求不等于一次 loop。instructions 不等同 system；native thinking 可能只是摘要。原始请求、响应、tools 与 trace 完整展示。", [turnAnchor("try_run_sampling_request", "2519"), turnAnchor("run_sampling_request / retries", "1647")]),
-  "c-decide2": cxDoc("handle_output_item_done 经 ToolRouter 识别/路由工具，在采样流中开始处理。toolCalls 只是解析推断，不能证明路由或执行；无工具摘要不证明机制被跳过。", [["core/src/stream_events_utils.rs", "handle_output_item_done / ToolRouter", "315"], turnAnchor("try_run_sampling_request", "2519")]),
-   "c-tool": cxDoc("工具在模型流期间处理，不等待 UI llm.response；drain_in_flight 收割结果。exec 工具 items 直接报告状态，badge 按 item 身份去重计数，不计计划/错误 items，也不计内部执行次数。完整 raw item 保留 MCP result 与 collaboration 元数据。", [["core/src/stream_events_utils.rs", "handle_output_item_done", "315"], turnAnchor("drain_in_flight", "2466"), ["exec/src/exec_events.rs", "ThreadItemDetails / CollabToolCallItem / McpToolCallItem", "107-292"]]),
-  "c-decide": cxDoc("needs_follow_up 综合模型跟进和待处理输入，end_turn 参与模型流语义。工具解析摘要不能证明该判定；无跟进仍进入 stop hooks，hook 可能继续。turn.completed 不反推任何一次分支。", [turnAnchor("run_turn / needs_follow_up", "566"), turnAnchor("try_run_sampling_request / end_turn", "2973"), turnAnchor("run_turn / stop hooks", "653")]),
-  "c-compact": cxDoc("循环中的条件性压缩与 turn 前、turn 后压缩不同。额外采样或 input 变短不是此分支执行的充分证据，未直接观测时保持空记录。", [turnAnchor("run_turn / mid-turn compaction", "601")]),
-  "c-stop": cxDoc("无跟进不是保证 break：stop hooks 可能添加工作并继续 loop，也可 should_stop 提前 break；legacy after-agent hook 还有提前返回路径。正常收尾才检查 turn 后压缩。不从 turn.completed 伪造 hook 记录。", [turnAnchor("run_turn / stop hooks", "653-713")]),
-  "c-postcompact": cxDoc("turn 后还有条件性压缩机制，不把停止跟进简化成直接进程退出。只有直接对应观测才归档，完成事件不证明此机制执行。", [turnAnchor("run_turn / post-turn compaction", "713")]),
-  "c-sandbox": cxDoc("exec 默认 AskForApproval::Never，但有例外配置；沙箱/审批以实际配置和启动证据为准，不能说所有 exec 都固定 Never。未出现询问不证明授权或执行成功。", [["exec/src/lib.rs", "run_main / default approval", "571"], ["exec/src/lib.rs", "run_main / approval exceptions", "758"]]),
-  "c-done": cxDoc("run_turn 收尾/错误返回、task 完成、进程 close 是不同边界。区分 ended、failed、interrupted；code=0 不覆盖 turn 失败。agent_message completed 不一定是最终回答，completed 不保证任务正确。", [turnAnchor("run_turn / TurnAborted handling", "793"), ["core/src/tasks/mod.rs", "task completion", "812"]]),
+  "c-ui": cxDoc(LESSONS.start, [["exec/src/lib.rs", "run_main", "259"]]),
+  "c-server": cxDoc({ what: "加载任务配置，选择模型和工具，准备项目目录与执行策略。开始新的处理周期前，也会按需检查已有历史。", example: "在项目目录中启用文件与命令工具，并为本地命令配置受限运行环境。", next: "进入主要智能体循环，准备第一次模型输入。" }, [["core/src/tasks/regular.rs", "startup", "48-114"], turnAnchor("pre-sampling setup", "179-221")], "turn.started 属于启动记录，现并入运行准备；预采样整理发生在主 loop 前。"),
+  "c-context": cxDoc(LESSONS.context, [turnAnchor("history and request input", "515-534"), turnAnchor("build_prompt", "1583-1599")], "没有阶段字段的 compaction trace 归到上下文管理，不据此判定 pre/mid/post 路径。WS 增量载荷与响应链重建分别保存。"),
+  "c-budget": cxDoc({ what: "需要继续处理时，检查当前历史是否接近容量限制，或是否需要切换上下文窗口。", example: "工具执行了许多轮，历史不断增长；继续下一次模型调用前先判断是否需要整理。", next: "需要就整理历史；否则直接用当前历史准备下一次输入。" }, [turnAnchor("rollover conditions", "601-650")]),
+  "c-compact": cxDoc({ ...LESSONS.compact, next: "成功后检查待运行的启动扩展；压缩失败或中断则返回上层，由生命周期处理保留实际结果。" }, [turnAnchor("mid-turn compaction and errors", "601-650"), turnAnchor("compaction implementation selection", "1471-1534")], "needs_follow_up 且窗口请求/阈值命中才进入。TokenBudget 可重置窗口而不生成摘要。TurnAborted 返回 Err；其他压缩错误报告后返回 Ok(None)。未知 phase 的记录只归上下文。"),
+  "c-compact-next": cxDoc({ what: "继续阶段的历史整理成功后，运行尚待处理的启动扩展，并检查它是否阻断继续处理。", example: "新上下文已经准备好，但启动检查要求停止，本轮直接返回。", next: "阻断就返回上层；否则重新准备上下文，继续主循环。没有配置扩展也会走继续路径。" }, [turnAnchor("pending session-start hooks after compaction", "640-650")], "run_pending_session_start_hooks 返回 true 则 Ok(None)，否则调整 can_drain_pending_input 并 continue。固定版本 trace 不提供 HookStarted/Completed，不能从压缩完成事件猜该分支。"),
+  "c-llm": cxDoc(LESSONS.model, [turnAnchor("build_prompt", "1583-1599"), turnAnchor("sampling retries", "1642-1689"), turnAnchor("terminal errors and Guardian recovery", "759-837")], "模型框收起传输、重试和特殊恢复。Guardian 的 ContextWindowExceeded 恢复仅限非 TokenBudget、存在 ExhaustedReviewBudget 且本模型 step 未做过恢复压缩时一次重试，不是所有容量错误自动恢复。红线仅最终终止异常，API 捕获错误不反推它。"),
+  "c-decide2": cxDoc(LESSONS.toolChoice, [["core/src/stream_events_utils.rs", "tool call recognition", "315-425"]]),
+  "c-delegate": cxDoc(LESSONS.delegation, [["core/src/tools/registry.rs", "handler resolution and hooks", "535-626"], ["core/src/tools/spec_plan.rs", "V1 / V2 collaboration registration", "1298-1420"]], "菱形是处理器类别的职责归并，不是所有调用先经过统一 if。可用能力取决于配置与版本；hooks/策略检查在实际派发及工具实现内。Other 或缺失开始记录的原生工具事件在这里中性归档，不宣称分类判断已执行或任一分支命中。"),
+  "c-sub": cxDoc(LESSONS.child, [["core/src/tools/spec_plan.rs", "V1 / V2 tools", "1298-1420"], ["core/src/tools/handlers/multi_agents/spawn.rs", "spawn returns agent handle", "53-207"], ["core/src/tools/handlers/multi_agents/wait.rs", "wait and timeout", "95-239"], ["exec/src/exec_events.rs", "collab item schema", "220-258"], ["rollout-trace/src/raw_event.rs", "explicit child-parent result", "208-218"]], "V1 有 spawn/send_input/resume/wait/close；V2 可有 spawn/send_message/followup_task/wait/interrupt/list，没有 close，功能可禁用。仅成功 spawn 的明确 receiver 或原生 parent/child 结果建立父子；wait/send/close 的 sender/receiver 只证明交互。Other kind 不猜处理器类别。管理返回不等于子任务完成。"),
+  "c-tool": cxDoc(LESSONS.tool, [["core/src/stream_events_utils.rs", "tool future dispatch", "315-358"], turnAnchor("queue and execute tools", "2766-2780"), ["exec/src/exec_events.rs", "tool item reports", "107-293"], ["rollout-trace/src/raw_event.rs", "code cell lifecycle", "163-182"]]),
+  "c-feedback": cxDoc(LESSONS.feedback, [turnAnchor("record tool results", "2466-2493"), turnAnchor("drain before return", "3140-3171"), ["core/src/stream_events_utils.rs", "record completed response items", "346-395"]]),
+  "c-decide": cxDoc({ what: "判断模型是否还需要处理新结果，或是否有新输入等待处理。没有工具调用，也可能需要下一次模型工作。", example: "测试返回了失败信息，模型还要据此修复；或者用户在运行期间补充了要求。", next: "还需处理就检查历史容量，再回到上下文准备；否则进行收尾判断。" }, [turnAnchor("needs_follow_up", "536-566"), turnAnchor("end_turn", "2973-2979")]),
+  "c-stop": cxDoc({ what: "没有后续处理时，检查配置的收尾扩展。结果分为追加工作、提前返回和正常收尾，不是简单的允许或拒绝。", example: "扩展提供“补跑测试”的有效输入时继续；要求停止时绕过正常收尾维护。", next: "有追加输入回到上下文准备；提前停止返回上层；正常路径才进入收尾维护。" }, [turnAnchor("stop outcomes", "653-713")], "should_block 必须带有效 continuation 才 continue；没有片段只 warn 后继续正常收尾。should_stop break；legacy hook 可能 return。完成事件不能证明 hook 已执行。"),
+  "c-finalize": cxDoc({ what: "只在正常收尾路径检查是否需要维护历史。满足配置、容量、没有新输入及未取消等条件，才执行收尾压缩。", example: "任务已无待处理输入且达到维护阈值，系统整理历史；阈值未命中则直接返回。", next: "返回上层；维护被中断保留中断错误，其他维护错误保留回答并记录警告，也可能发布用量限制错误。" }, [turnAnchor("post-turn maintenance", "716-755")], "PostTurn：阈值启用、非 TokenBudget、达到阈值、无 pending input、未取消才压缩。Interrupted/TurnAborted 返回 Err；UsageLimitExceeded 发布错误生命周期，其余维护错误 warn，随后 break。单出口收起维护内部路径，因为都返回上层，不代表返回结果相同。"),
+  "c-sandbox": cxDoc({ what: "执行环境和权限规定工具在哪里运行、能访问什么。检查由派发及具体工具实现完成，不是统一审批门。配置与某次批准是不同事实。", example: "本地命令使用项目可写沙箱；页面展示实际启动策略，但不能据此认定每条命令已获批准。", next: "工具按自身约束执行、拒绝或返回错误；外部服务和子智能体依各自配置运行。" }, [["exec/src/lib.rs", "sandbox and approval setup", "571-578"], ["core/src/tools/sandboxing.rs", "execution requirements", "151-216"], ["core/src/tools/registry.rs", "dispatch hooks", "790-831"], ["rollout-trace/src/protocol_event.rs", "approval and hook events omitted", "483-506"]], "本项目 workspace-write / never 的实际参数作为 boundary 记录；never 不等于禁用沙箱。固定版本 wrapped_protocol_event_type 不采集 ExecApprovalRequest、ApplyPatchApprovalRequest、HookStarted/Completed，页面不声称逐次审批或 hook 观测。"),
+  "c-done": cxDoc({ what: "本轮处理函数把结果返回上层。它可能正常收尾、失败或中断；上层仍可能处理新输入，因此不等于整个任务或进程已经结束。", example: "本轮返回后发现还有新要求，上层再次进入处理；没有后续工作才发布任务完成状态。", next: "上层维护生命周期。页面分别保存实际任务完成、失败、中断与进程退出报告。" }, [["core/src/tasks/regular.rs", "outer run_turn loop", "104-124"], ["core/src/tasks/mod.rs", "task terminal event", "812-887"], ["exec/src/event_processor_with_jsonl_output.rs", "turn status mapping", "513-564"]], "底部表示 run_turn 返回；终态事件作为相关记录，不是该函数 return 的直接 trace。turn 完成与 exec close 独立，后续 code=0 不覆盖失败/中断。启动/输入检查等提前返回收在对应处理框；继续压缩后的启动检查已单独画出。图不是整个 CLI 的所有任务模式。"),
 },
 }
 
@@ -1443,7 +1383,7 @@ function resetUI() {
   Object.keys(partVocab).forEach(k => delete partVocab[k])
   Object.keys(store).forEach(k => delete store[k])
   seenAssistantMsgs.clear()
-  for (const collection of [sessionParents, pendingDeltas, messageRoles, pendingMessageText, toolStates, codexItems, terminalSessions, sessionErrors, assistantSnapshots, seenPartMarkers, seenLlmRequests, seenEventIDs, openRecords]) collection.clear()
+  for (const collection of [sessionParents, pendingDeltas, messageRoles, pendingMessageText, codexThreadParents, codexToolNodes, toolStates, codexItems, terminalSessions, sessionErrors, assistantSnapshots, seenPartMarkers, seenLlmRequests, seenEventIDs, openRecords]) collection.clear()
   pendingSessionEvents.length = 0
   loggedEvents = new WeakSet(); currentEvent = null; currentRunID = null; llmRevision++
   pendingPerm = null; permModal.classList.remove("show")
@@ -1452,7 +1392,7 @@ function resetUI() {
   Object.keys(requestCache).forEach(k => delete requestCache[k])
   llmCallCount = 0; llmBadge.textContent = "捕获请求: 0"
   document.querySelectorAll(".cnt").forEach(c => { c.style.display = "none"; c.textContent = "0" })
-  document.querySelectorAll(".fnode,.fdia").forEach(e => { e.classList.remove("unread", "active") })
+  document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(e => { e.classList.remove("unread", "active") })
   currentSession = null
   document.getElementById("sessionLabel").textContent = ""
   setRun("idle")
@@ -1523,9 +1463,9 @@ document.getElementById("abortBtn").onclick = async () => {
 /* ═══════════ 流程图缩放 & 平移 ═══════════ */
 const flowWrap = document.getElementById("flowWrap")
 const flowCanvas = document.getElementById("flowCanvas")
-let view = { k: 1, x: 0, y: 16, auto: true, whole: false }
+let view = { k: 1, x: 0, y: 16, auto: true, whole: !smallScreen() }
 const applyView = () => { flowCanvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})` }
-function fitFlow(whole = false) {
+function fitFlow(whole = !smallScreen()) {
   if (!flowWrap.clientWidth || !flowWrap.clientHeight) return
   const width = flowWrap.clientWidth - 32, height = flowWrap.clientHeight - 32
   const k = Math.min(1, width / 700, whole ? height / 1070 : 1)
@@ -1548,7 +1488,7 @@ flowWrap.addEventListener("wheel", (e) => {
 }, { passive: false })
 flowWrap.style.touchAction = "none"
 flowWrap.addEventListener("pointerdown", (e) => {
-  if (e.target.closest(".fnode,.fdia")) return   // 节点上按下不拖动，保留点击
+  if (e.target.closest(".fnode,.fdia,.zone-label")) return   // 节点上按下不拖动，保留点击
   e.preventDefault()
   flowWrap.classList.add("panning")
   view.auto = false

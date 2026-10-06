@@ -758,7 +758,7 @@ const server = createServer(async (req, res) => {
     if (![`${HOST}:${VIZ_PORT}`, `localhost:${VIZ_PORT}`].includes(req.headers.host)) return json(res, { error: "Invalid local Host" }, 403)
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return json(res, { error: "Cross-origin requests are not allowed" }, 403)
     if (req.method === "POST" && !req.headers["content-type"]?.startsWith("application/json")) return json(res, { error: "application/json is required" }, 415)
-    if (req.method === "GET" && ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js"].includes(url.pathname)) {
+    if (req.method === "GET" && ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js"].includes(url.pathname)) {
       const javascript = await readFile(path.join(ROOT, "public", url.pathname.slice(1)))
       res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" })
       res.end(javascript)

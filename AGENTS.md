@@ -12,7 +12,10 @@
 - 工具可在流期间执行；OpenCode compaction 标记不代表完成，task 工具不等于 preflight SubtaskPart，idle 不代表成功。reasoning/text delta 按 part 类型分类。
 - Codex 续接可只含增量 input；工具定义可在 `additional_tools`。缺失不表示零工具；stop hooks 可续行，完成事件不反推分支。
 - 不恢复宽泛 PowerShell allow 规则。隔离目录不是完整安全沙箱；Codex 原生模式复制用户认证，但不修改源认证/config。
-- 页面两张流程图内部坐标统一 `700x1070`，节点固定高 `64px`；共享样式用 `.flowsvg`，每张 SVG 自带 marker；Codex 节点以 `c-` 开头。
+- 两张教学机制图由 `public/flows.js` 统一定义，坐标为 `700x1070`，处理/判断节点高 `64px`；共享 `.flowsvg` 样式与各自 marker，Codex 节点以 `c-` 开头。椭圆表示入口/返回，矩形表示处理，菱形表示判断，双边矩形收起子流程；虚线框表示主循环边界，实线区域表示执行环境。不要给普通处理节点加未定义含义的虚线边框。
+- 判断框入口和各出口分别使用独立端口，二向/多向结果均须标注，不沿同一段入线反向画分支。普通处理节点不能隐藏正常结果判断；终止异常须在模型中明确声明并指向返回端点。连线交叉留断口表示不连接，结果汇合的端点保持连接；历史整理后的回线明确标成「重新准备」。
+- 节点说明面向学员，默认用中文解释「做什么—例子—下一步」；函数名、协议缩写、计数与观测细节折叠保留。生命周期事件并入运行准备，不能代替智能体循环；工作记忆与跨任务记忆区分，外部工具不默认受本地沙箱约束。
+- 核对见 `docs/flow-audit.md`；`node scripts/audit-flows.mjs` 校验源码定位、分支、区域、正交端口、节点重叠与连线穿越。`node scripts/export-flow-drawio.mjs` 生成同源可编辑图，`--check` 检查同步。未知阶段的压缩 trace 归上下文，子任务只凭明确关联 ID 分类，不把输入、请求或消息数当内部迭代数。
 - 仅顶部工具栏固定显示；面板开关只改变视图，不清空任务或事件。输入框保持单行，不自动增高。
 - Markdown 使用本地 `public/vendor` 中的 Marked / DOMPurify；不要把模型输出直接写入 innerHTML。更新依赖用 `node scripts/vendor-markdown.mjs` 并保留许可证。
 - 模型输入重建只关联同一 run / thread 的 previous_response_id 请求链，原始载荷不修改。缺少前序响应标为不完整，不从时间顺序猜补；转译模式优先展示实际发给上游的输入。

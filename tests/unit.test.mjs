@@ -5,9 +5,12 @@ import { readFile, writeFile, mkdir, mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { readTraceEvents, summarizeResponse, requestTools, withModelInputs } from "../src/trace.mjs"
+import { loadFlowModel, validateFlowGraph } from "../scripts/flow-model.mjs"
 
 const server = await readFile(new URL("../src/server.mjs", import.meta.url), "utf8")
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8")
+const flows = await loadFlowModel()
+const chartMarkup = flows.render("opencode") + flows.render("codex")
 const translatorStart = server.indexOf("function responsesToAnthropic(")
 const translatorSource = server.slice(translatorStart, server.indexOf("\n/**", translatorStart))
 const translate = vm.runInNewContext(`(${translatorSource})`)
@@ -17,9 +20,27 @@ const parse = vm.runInNewContext(`(${parserSource})`)
 
 test("frontend script parses; SVG dimensions and IDs are consistent", () => {
   new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1])
-  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1])
+  const ids = [...(html + chartMarkup).matchAll(/\bid="([^"]+)"/g)].map(match => match[1])
   assert.equal(ids.length, new Set(ids).size)
-  assert.equal((html.match(/viewBox="0 0 700 1070"/g) ?? []).length, 2)
+  assert.equal((chartMarkup.match(/viewBox="0 0 700 1070"/g) ?? []).length, 2)
+  for (const graph of Object.values(flows.graphs)) validateFlowGraph(graph, flows.size)
+})
+
+test("diagram validation rejects hidden normal branches and undeclared exception exits", () => {
+  const graph = JSON.parse(JSON.stringify(flows.graphs.opencode))
+  const process = graph.nodes.find(n => n.shape === "process" && !n.exceptions)
+  const edge = graph.edges.find(e => e.from === process.id)
+  graph.edges.push({ ...edge, label: "extra result" })
+  assert.throws(() => validateFlowGraph(graph, flows.size), /must not hide a normal result decision/)
+  graph.edges.at(-1).kind = "exit"
+  assert.throws(() => validateFlowGraph(graph, flows.size), /exceptional exit must be explicitly declared/)
+})
+
+test("diagram validation requires every declared multi-way branch", () => {
+  const graph = JSON.parse(JSON.stringify(flows.graphs.codex))
+  const decision = graph.nodes.find(n => n.branches > 2)
+  graph.edges.splice(graph.edges.findIndex(e => e.from === decision.id), 1)
+  assert.throws(() => validateFlowGraph(graph, flows.size), /decisions need all declared branches/)
 })
 
 test("translator preserves function call/result identity but is explicitly lossy", () => {

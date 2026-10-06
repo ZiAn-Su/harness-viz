@@ -166,7 +166,7 @@ try {
     assert.equal(results.status.targetProject, path.join(root, "examples", "demo"))
     const models = (await api("/api/models")).models
     assert.deepEqual(models.map(model => model.value), ["minimax/MiniMax-M3.1-Flash-Preview"])
-    for (const asset of ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js"]) {
+    for (const asset of ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js"]) {
       const response = await fetch(base + asset)
       assert(response.ok && response.headers.get("content-type").includes("javascript"), "Browser Markdown assets must be available locally")
       assert((await response.text()).length > 100)

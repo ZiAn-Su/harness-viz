@@ -24,7 +24,7 @@ const html = await readFile(path.join(root, "public", "index.html"))
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1")
   if (url.pathname === "/") { res.setHeader("Content-Type", "text/html;charset=utf-8"); res.end(html); return }
-  if (["/vendor/marked.js", "/vendor/purify.js", "/markdown.js"].includes(url.pathname)) {
+  if (["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js"].includes(url.pathname)) {
     res.setHeader("Content-Type", "text/javascript;charset=utf-8")
     res.end(await readFile(path.join(root, "public", url.pathname.slice(1))))
     return
@@ -126,6 +126,22 @@ async function verifyDownload(call) {
   assert.deepEqual(JSON.parse(formatted), payload)
   assert.ok(formatted.includes("\n  "))
 }
+async function verifyFlowDocs(harness) {
+  const container = harness === "codex" ? "flowCodex" : "flowOpencode"
+  const nodes = await evaluate(`[...document.querySelectorAll('#${container} [data-node]')].map(node => node.dataset.node)`)
+  assert(await evaluate(`(() => { const graph = document.querySelector('#${container}'); const zone = graph.querySelector('.zone-label').getBoundingClientRect(); const sub = graph.querySelector('[data-shape="subprocess"]${harness === "opencode" ? '[data-node="sub"]' : ''}').getBoundingClientRect(); return zone.bottom <= sub.top })()`), `${harness}: environment heading must not overlap a tool node`)
+  assert(await evaluate(`(() => { const svg = document.querySelector('#${container} svg'); const canvas = svg.viewBox.baseVal; return [...svg.querySelectorAll('.lbl')].every(label => { const box = label.getBBox(); return box.x >= 0 && box.y >= 0 && box.x + box.width <= canvas.width && box.y + box.height <= canvas.height }) })()`), `${harness}: branch labels must remain inside the canvas`)
+  await evaluate('document.querySelector("[data-tab=doc]").click()')
+  for (const node of nodes) {
+    await evaluate(`selectNode(${JSON.stringify(node)})`)
+    assert(await evaluate(`document.querySelector("#nodePanel h3")?.textContent === "这一步做什么" && document.querySelector("#nodePanel .lesson-example") && [...document.querySelectorAll("#nodePanel a")].length > 0 && [...document.querySelectorAll("#nodePanel a")].every(link => link.href.includes(SOURCE_PINS[${JSON.stringify(harness)}].commit))`), `${node}: learner explanation and fixed source links must be accessible`)
+    assert(await evaluate(`(() => { const doc = document.querySelector("#nodePanel .doc").cloneNode(true); doc.querySelectorAll("details").forEach(d => d.remove()); return !/build_prompt|needs_follow_up|stopWhen|base instructions|\\bbadge\\b|\\bHTTP\\b|\\bWS\\b|\\bturn\\b|\\bassistant\\b/.test(doc.textContent) && !document.querySelector("#nodePanel details").open })()`), `${node}: implementation terms must stay in collapsed details`)
+  }
+  await evaluate(`selectNode(${JSON.stringify(harness === "codex" ? "c-context" : "loop")})`)
+  await screenshot(harness + "-lesson")
+  await evaluate(`document.querySelector("[data-tab=records]").click(); selectNode(${JSON.stringify(harness === "codex" ? "c-llm" : "llm")})`)
+  checks.push(`${harness}: all ${nodes.length} visible nodes open their explanation and pinned source links`)
+}
 try {
   let page
   for (let n = 0; n < 100; n++) {
@@ -177,6 +193,7 @@ try {
   assert.equal(await evaluate(`document.querySelectorAll("#transcript .user").length`), 1)
   assert(await evaluate(`[...document.querySelectorAll("#transcript .assistant .body")].every(body => body.dataset.rawText !== ${JSON.stringify(originalPrompt)})`))
   checks.push("OpenCode user-message events are not mislabelled as assistant")
+  await verifyFlowDocs("opencode")
   await evaluate('document.querySelector("#fn-llm").click(); document.querySelector("#nodePanel .rec .hd").click()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
   assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("请求输入")'))
@@ -210,6 +227,9 @@ try {
   checks.push("OpenCode real-event replay and full request panel")
   await evaluate('document.querySelector("[data-h=codex]").click()')
   await wait(`document.querySelector("#llmBadge")?.textContent === "捕获请求: ${calls.filter(call => call.harness === "codex").length}"`)
+  await verifyFlowDocs("codex")
+  assert(await evaluate('!document.querySelector("#fn-c-loop, #fn-c-precompact, #fn-c-history, #fn-c-perm") && document.querySelector("#fn-c-sandbox").dataset.shape === "environment" && document.querySelector("#fn-c-sub").dataset.shape === "subprocess" && document.querySelector("#fn-c-compact-next").dataset.shape === "decision"'), "teaching view must show per-handler permissions and the actual post-compaction branch")
+  assert(await evaluate('store["c-sandbox"]?.some(record => record.data.sandbox === "workspace-write" && record.data.approvalPolicy === "never")'), "real launch configuration must be available at the sandbox node")
   await evaluate('document.querySelector("#nodePanel .rec .hd").click()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("native-trace")'))
@@ -259,7 +279,7 @@ try {
     await command("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false })
     await command("Page.reload")
     await wait('document.querySelector("[data-h=codex]")?.classList.contains("on")')
-    await evaluate('setView("flow", true); setView("details", true); setView("input", true)')
+    await evaluate('setView("flow", true); setView("details", true); setView("input", true); document.querySelector("[data-tab=records]").click()')
     const prompt = runs.codex.events.find(event => event.type === "viz.run").properties.prompt
     await evaluate(`document.querySelector("#prompt").value = ${JSON.stringify(prompt)}`)
     const frames = path.join(evidence, "recording-frames-" + Date.now())
@@ -286,7 +306,7 @@ try {
       await delay(3200)
       await evaluate(`const requestRecord = store["c-llm"].find(record => record.kind === "llm" && record.data.index === ${reconstructed.index}); document.querySelectorAll("#nodePanel .rec .hd")[store["c-llm"].indexOf(requestRecord)].click()`)
       await delay(3200)
-      await evaluate('document.querySelector("#fn-c-history").click(); document.querySelector("[data-tab=doc]").click()')
+      await evaluate('document.querySelector("#fn-c-llm").click(); document.querySelector("[data-tab=doc]").click()')
       await delay(1800)
     } finally { clearInterval(timer); await pendingCapture }
     const ffmpeg = process.env.VIZ_FFMPEG ?? "ffmpeg"

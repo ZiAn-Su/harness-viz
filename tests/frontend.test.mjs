@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from "node:util"
 
 // Synthetic frontend units, not browser/layout verification or live integration.
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8")
+const flowSource = await readFile(new URL("../public/flows.js", import.meta.url), "utf8")
+const flowMarkup = vm.runInNewContext(flowSource + '; HarnessFlows.render("opencode") + HarnessFlows.render("codex")')
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].filter(match => match[1].trim())
 assert.equal(scripts.length, 1, "expected one inline frontend script")
 const source = scripts[0][1]
@@ -76,9 +78,10 @@ class Element {
 
 function createFrontend(harness = "opencode") {
   const elements = new Map()
-  for (const match of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
+  for (const match of (html + flowMarkup).matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
     const element = new Element(match[0].match(/\bclass="([^"]*)"/)?.[1] ?? "")
     element.attached = true
+    for (const attr of match[0].matchAll(/\bdata-([\w-]+)="([^"]*)"/g)) element.dataset[attr[1]] = attr[2]
     elements.set(match[1], element)
   }
   let calls = [], eventID = 0, timerID = 0
@@ -114,8 +117,9 @@ function createFrontend(harness = "opencode") {
     context.fixture = fixture
     return vm.runInContext(code, context, { timeout: 1000 })
   }
+  new vm.Script(flowSource, { filename: "flows.js:synthetic-unit" }).runInContext(context, { timeout: 1000 })
   new vm.Script(unitSource, { filename: "index.html:synthetic-unit" }).runInContext(context, { timeout: 1000 })
-  evaluate(`harness=${JSON.stringify(harness)}; selectedNode=${JSON.stringify(harness === "codex" ? "c-llm" : "llm")}`)
+  evaluate(`harness=${JSON.stringify(harness)}; activeTab="records"; selectedNode=${JSON.stringify(harness === "codex" ? "c-llm" : "llm")}`)
   return {
     elements, evaluate, fetches,
     read(code) {
@@ -257,7 +261,7 @@ test("synthetic: capture before root initialization is deferred, not misattribut
   assert.equal(ui.read("llmCallCount"), 1)
   assert.deepEqual(ui.read("store.llm[0].event"), request)
   assert.equal(ui.read("store.llm[0].time"), request.receivedAt)
-  assert.deepEqual(ui.read("store.loop ?? []"), [], "boundary capture is not a loop observation")
+  assert.equal(ui.read("store.loop[0].evidence"), "boundary", "prepared input is a request-boundary observation, not a loop iteration")
 })
 
 test("synthetic: repeated OpenCode tool updates count once by call identity", () => {
@@ -270,19 +274,19 @@ test("synthetic: repeated OpenCode tool updates count once by call identity", ()
   const completed = { ...part, id: "part-2", state: { status: "completed", output: longText, metadata: { sessionId: "child", parentSessionId: "root" }, attachments: [{ content: "attachment-marker" }] } }
   ui.event("message.part.updated", { part: completed })
   ui.event("message.part.updated", { part: completed })
-  assert.equal(ui.read("store.tool.length"), 1)
+  assert.equal(ui.read("store.sub.length"), 1)
   assert.equal(ui.read("store.exec.length"), 1)
-  assert.equal(ui.elements.get("cnt-tool").textContent, "1")
+  assert.equal(ui.elements.get("cnt-sub").textContent, "1")
   assert.equal(ui.read("Object.keys(toolCards).length"), 1)
-  assert.deepEqual(ui.read("store.tool[0].data"), completed)
+  assert.deepEqual(ui.read("store.sub[0].data"), completed)
   assert.deepEqual(ui.read("store.subflow1 ?? []"), [], "ordinary task is not preflight SubtaskPart execution")
   assert.equal(ui.read('isChild({sessionID:"child"})'), true)
 })
 
-test("synthetic: Codex command/MCP/collaboration item updates preserve one card and full result", () => {
+test("synthetic: Codex command/MCP/collaboration/search updates preserve one card and full result", () => {
   const ui = createFrontend("codex")
   ui.event("viz.run")
-  for (const type of ["command_execution", "mcp_tool_call", "collab_tool_call"]) {
+  for (const type of ["command_execution", "mcp_tool_call", "collab_tool_call", "web_search"]) {
     const item = { id: type, type, status: "in_progress", command: "fixture", tool: "spawn_agent", server: "fixture-server", arguments: "{invalid", receiver_thread_ids: ["child"] }
     ui.event("codex.item.started", { item })
     ui.event("codex.item.updated", { item })
@@ -291,16 +295,21 @@ test("synthetic: Codex command/MCP/collaboration item updates preserve one card 
     ui.event("codex.item.completed", { item: completed })
     ui.event("codex.item.updated", { item })
     assert.deepEqual(ui.read(`codexItems.get(${JSON.stringify(type)}).item`), completed)
-    assert.deepEqual(ui.read(`store["c-tool"].find(r => r.data.id === ${JSON.stringify(type)}).data`), completed)
+    assert.deepEqual(ui.read(`store[${JSON.stringify(type === "collab_tool_call" ? "c-sub" : "c-tool")}].find(r => r.data.id === ${JSON.stringify(type)}).data`), completed)
     assert.ok(rawSections(ui.read(`toolCards[${JSON.stringify("cx-" + type)}].innerHTML`)).some(section => isDeepStrictEqual(section, completed)))
   }
   assert.equal(ui.read('store["c-tool"].length'), 3)
-  assert.equal(ui.read("Object.keys(toolCards).length"), 3)
+  assert.equal(ui.read('store["c-sub"].length'), 1)
+  assert.equal(ui.read("Object.keys(toolCards).length"), 4)
   assert.equal(ui.elements.get("cnt-c-tool").textContent, "3")
+  assert.equal(ui.read('store["c-feedback"].find(record => record.data.type === "web_search").title'), "网页搜索返回结果")
   ui.event("codex.item.completed", { item: { id: "plan", type: "todo_list", items: [] } })
   ui.event("codex.item.completed", { item: { id: "error", type: "error", message: "recoverable item" } })
   assert.equal(ui.elements.get("cnt-c-tool").textContent, "3")
   assert.equal(ui.read("runState"), "busy")
+  assert.equal(ui.read('store["c-feedback"].at(-2).data.type'), "todo_list")
+  assert.equal(ui.read('store["c-feedback"].at(-1).data.type'), "error")
+  assert.deepEqual(ui.read('store["c-done"] ?? []'), [], "recoverable error items are not turn completion")
 })
 
 test("synthetic: submission failure releases frontend busy state and survives idle", () => {
@@ -383,27 +392,175 @@ test("synthetic: turn.started counts turns, not API requests, loops or unobserve
     ui.event("llm.response", { index, toolCalls: ["shell"], textChars: 0, usage: {} })
   }
   ui.event("codex.turn.completed", { usage: { input_tokens: 5 } })
-  assert.equal(ui.read('store["c-loop"].length'), 1)
-  assert.match(ui.read('store["c-loop"][0].meta'), /\u4e0d\u8ba1\u5185\u90e8 loop \u8fed\u4ee3/u)
-  assert.equal(ui.elements.get("cnt-c-loop").textContent, "1")
+  assert.equal(ui.read('store["c-server"].length'), 1)
+  assert.equal(ui.elements.get("cnt-c-server").textContent, "1")
   assert.equal(ui.read("llmCallCount"), 3)
   assert.equal(ui.read('store["c-llm"].filter(r => r.kind === "llm").length'), 3)
+  assert.deepEqual(ui.read('store["c-history"] ?? []'), [], "the same request is not archived twice")
   assert.deepEqual(ui.read('store["c-decide2"].map(r => r.evidence)'), ["inferred", "inferred", "inferred"])
-  for (const node of ["c-precompact", "c-tool", "c-decide", "c-compact", "c-stop", "c-postcompact"])
+  for (const node of ["c-budget", "c-tool", "c-decide", "c-compact", "c-stop"])
     assert.deepEqual(ui.read(`store[${JSON.stringify(node)}] ?? []`), [], `${node}: no fabricated observed branch`)
 })
 
 test("synthetic: native trace/warning records retain direct evidence without invented API calls", () => {
   const ui = createFrontend("codex")
   ui.event("viz.run")
-  const trace = ui.event("codex.trace", { event: { seq: 9, payload: { type: "compaction_started", detail: longText } } }, { source: "native-trace" })
+  const trace = ui.event("codex.trace", { event: { seq: 9, payload: { type: "compaction_request_started", detail: longText } } }, { source: "native-trace" })
   const warning = ui.event("codex.trace.warning", { message: "incomplete capture", inferenceCallID: "inference-9" }, { source: "native-trace" })
-  assert.deepEqual(ui.read('store["c-compact"][0].event'), trace)
-  assert.equal(ui.read('store["c-compact"][0].evidence'), "direct")
+  assert.deepEqual(ui.read('store["c-context"][0].event'), trace)
+  assert.equal(ui.read('store["c-context"][0].evidence'), "direct")
   assert.deepEqual(ui.read('store["c-llm"][0].event'), warning)
   assert.equal(ui.read("llmCallCount"), 0)
   assert.deepEqual(ui.read('store["c-precompact"] ?? []'), [])
+  assert.deepEqual(ui.read('store["c-compact"] ?? []'), [], "phase-less compaction is not classified as MidTurn")
   assert.deepEqual(ui.read('store["c-postcompact"] ?? []'), [])
+})
+
+test("synthetic: child lifecycle and user messages stay in the child node", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const created = ui.event("session.created", { info: { id: "child", parentID: "root" } })
+  const user = ui.event("message.updated", { info: { id: "child-user", role: "user", sessionID: "child" } })
+  assert.deepEqual(ui.read("store.server ?? []"), [])
+  assert.deepEqual(ui.read("store.sub.map(r => r.event)"), [created, user])
+})
+
+test("synthetic: permission interaction stays usable in the environment without fabricating execution", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const ask = ui.event("permission.asked", { id: "permission-1", sessionID: "root", permission: "edit", patterns: ["fixture"], tool: { callID: "tool-1" } })
+  assert.equal(ui.elements.get("permModal").classList.contains("show"), true)
+  assert.equal(ui.elements.get("cnt-sandbox").textContent, "1")
+  assert.deepEqual(ui.read("store.sandbox[0].event"), ask)
+  const reply = { sessionID: "root", requestID: "permission-1", reply: "once" }
+  const event = ui.event("permission.replied", reply)
+  assert.deepEqual(ui.read("store.sandbox[1].data"), reply)
+  assert.deepEqual(ui.read("store.sandbox[1].event"), event)
+  assert.equal(ui.elements.get("permModal").classList.contains("show"), false)
+  assert.deepEqual(ui.read("store.tool ?? []"), [], "an approval does not prove tool execution")
+  const retry = { sessionID: "root", status: { type: "retry", attempt: 2, action: "retry", next: 1791193123000, message: "temporary error" } }
+  ui.event("session.status", retry)
+  assert.deepEqual(ui.read("store.llm[0].data"), retry)
+})
+
+test("synthetic: task tool snapshots do not claim the ordinary or preflight route executed", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const marker = { id: "subtask-marker", sessionID: "root", type: "subtask", prompt: "fixture", agent: "general" }
+  ui.event("message.part.updated", { part: marker })
+  const part = { id: "task-part", sessionID: "root", callID: "task-1", type: "tool", tool: "task", state: { status: "running", input: {} } }
+  ui.event("message.part.updated", { part })
+  assert.equal(ui.read("store.sub[0].title"), "task 工具调用")
+  assert.deepEqual(ui.read("store.subflow1[0].data"), marker)
+  assert.deepEqual(ui.read("store.sub[0].data"), part)
+  assert.deepEqual(ui.read("store.delegate ?? []"), [], "task snapshots cannot prove the model-dispatch path")
+  assert.deepEqual(ui.read('store["pre-sub"] ?? []'), [], "a pending marker is not preflight execution")
+})
+
+test("synthetic: OpenCode compaction completion does not count the request marker twice", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const part = { id: "compact-1", sessionID: "root", type: "compaction", auto: true }
+  ui.event("message.part.updated", { part })
+  ui.event("message.part.updated", { part })
+  const completed = ui.event("session.compacted", { sessionID: "root" })
+  assert.equal(ui.elements.get("cnt-schedule").textContent, "1")
+  assert.equal(ui.read("store.schedule.length"), 1)
+  assert.equal(ui.read("store.subflow2.length"), 1)
+  assert.deepEqual(ui.read("store.subflow2[0].event"), completed)
+  assert.deepEqual(ui.read('store["compact-result"] ?? []'), [], "completion does not observe the process return decision")
+})
+
+test("synthetic: sandbox node records the supplied launch policy without claiming tool approval", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  const launch = { sandbox: "workspace-write", approvalPolicy: "never", args: ["exec", "--json"] }
+  const event = ui.event("codex.proc.start", launch)
+  assert.deepEqual(ui.read('store["c-sandbox"][0].data'), launch)
+  assert.equal(ui.read('store["c-sandbox"][0].evidence'), "boundary")
+  assert.deepEqual(ui.read('store["c-sandbox"][0].event'), event)
+  assert.deepEqual(ui.read('store["c-tool"] ?? []'), [])
+})
+
+test("synthetic: tagged native agent tool lifecycle stays in the child node", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  const observed = [
+    { type: "tool_call_started", tool_call_id: "agent-call-1", kind: { type: "spawn_agent" } },
+    { type: "tool_call_runtime_ended", tool_call_id: "agent-call-1", status: "completed" },
+    { type: "tool_call_ended", tool_call_id: "agent-call-1", status: "completed" },
+  ].map((payload, seq) => ui.event("codex.trace", { event: { seq, payload } }, { source: "native-trace" }))
+  assert.deepEqual(ui.read('store["c-sub"].map(record => record.event)'), observed)
+  assert.deepEqual(ui.read('store["c-tool"] ?? []'), [])
+  assert.equal(ui.read("runState"), "busy", "agent management completion is not task completion")
+})
+
+test("synthetic: Other tool kinds or missing starts do not infer a dispatch category", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  const observed = [
+    { type: "tool_call_started", tool_call_id: "other-1", kind: { type: "other", name: "list_agents" } },
+    { type: "tool_call_ended", tool_call_id: "other-1", status: "completed" },
+    { type: "tool_call_runtime_ended", tool_call_id: "missing-start", status: "completed" },
+  ].map((payload, seq) => ui.event("codex.trace", { event: { seq, payload } }, { source: "native-trace" }))
+  assert.deepEqual(ui.read('store["c-delegate"].map(record => record.event)'), observed)
+  assert.deepEqual(ui.read('store["c-tool"] ?? []'), [])
+  assert.deepEqual(ui.read('store["c-sub"] ?? []'), [])
+  assert.deepEqual(ui.read("[...codexThreadParents]"), [])
+})
+
+test("synthetic: child model work is associated only through explicit thread relationships", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  ui.event("codex.thread.started", { thread_id: "root" })
+  ui.event("codex.item.completed", { item: { id: "agent-1", type: "collab_tool_call", tool: "spawn_agent", sender_thread_id: "root", receiver_thread_ids: ["child"], status: "completed" } })
+  const child = ui.event("llm.request", { index: 1, sessionID: "child", model: "fixture", tools: [] })
+  ui.event("llm.request", { index: 2, sessionID: "unrelated", model: "fixture", tools: [] })
+  assert.deepEqual(ui.read('store["c-sub"].filter(record => record.data.index).map(record => record.event)'), [child])
+  assert.equal(ui.read('store["c-llm"].filter(record => record.kind === "llm").length'), 2)
+  assert.equal(ui.read('codexThreadParents.has("unrelated")'), false)
+})
+
+test("synthetic: collaboration interaction or unsuccessful spawn is not a parent relationship", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  ui.event("codex.thread.started", { thread_id: "root" })
+  for (const [id, tool, status, done] of [
+    ["wait", "wait", "completed", true],
+    ["send", "send_input", "completed", true],
+    ["close", "close_agent", "completed", true],
+    ["failed", "spawn_agent", "failed", true],
+    ["pending", "spawn_agent", "in_progress", false],
+  ]) {
+    ui.event(done ? "codex.item.completed" : "codex.item.started", { item: { id, type: "collab_tool_call", tool, status, sender_thread_id: "root", receiver_thread_ids: [id + "-receiver"] } })
+    ui.event("llm.request", { index: id, sessionID: id + "-receiver", model: "fixture", tools: [] })
+  }
+  assert.deepEqual(ui.read("[...codexThreadParents]"), [])
+  assert.deepEqual(ui.read('store["c-sub"].filter(record => record.kind === "llm" || record.data.index)'), [])
+  const proof = ui.event("codex.trace", { event: { payload: { type: "agent_result_observed", child_thread_id: "native-child", parent_thread_id: "root" } } }, { source: "native-trace" })
+  const child = ui.event("llm.request", { index: 99, sessionID: "native-child", model: "fixture", tools: [] })
+  assert.equal(ui.read('codexThreadParents.get("native-child")'), "root")
+  assert.deepEqual(ui.read('store["c-sub"].filter(record => record.data.index === 99).map(record => record.event)'), [child])
+  assert.ok(ui.read('store["c-sub"].some(record => record.event.id === ' + JSON.stringify(proof.id) + ')'))
+})
+
+test("synthetic: unsupported native protocol wrappers remain raw logs, not approval facts", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  const approval = ui.event("codex.trace", { event: { seq: 1, payload: { type: "protocol_event_observed", event_type: "exec_approval_request" } }, payloads: { event_payload: { call_id: "exec-1", command: ["fixture"], cwd: "project" } } }, { source: "native-trace" })
+  assert.deepEqual(ui.read('store["c-sandbox"] ?? []'), [], "the fixed trace wrapper does not capture approvals")
+  assert.deepEqual(ui.read('store["c-perm"] ?? []'), [])
+  assert.ok(ui.elements.get("eventlog").children.some(line => rawSections(line.innerHTML).some(event => event.id === approval.id)), "unsupported event envelopes remain available")
+  assert.deepEqual(ui.read('store["c-done"] ?? []'), [])
+})
+
+test("synthetic: function runtime reports remain tool observations, not model requests", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  const events = ["code_cell_started", "code_cell_initial_response", "code_cell_ended"].map((type, seq) => ui.event("codex.trace", { event: { seq, payload: { type, runtime_cell_id: "cell-1" } } }, { source: "native-trace" }))
+  assert.deepEqual(ui.read('store["c-tool"].map(record => record.event)'), events)
+  assert.equal(ui.read("llmCallCount"), 0)
+  assert.deepEqual(ui.read('store["c-done"] ?? []'), [])
 })
 
 test("synthetic: native WS request rendering preserves complete raw JSON and invalid arguments", () => {
