@@ -153,6 +153,34 @@ test("frontend syntax compiles without execution", () => {
   assert.doesNotThrow(() => new vm.Script(source, { filename: "index.html" }))
 })
 
+test("synthetic: CLI preparation disables only its entry and status refresh preserves records/drafts", async () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run", { prompt: "previous task" })
+  ui.evaluate("setRun('ended')")
+  ui.elements.get("prompt").value = "保留草稿"
+  const before = ui.read("store")
+  const status = { cliStatus: { codex: { phase: "installing", available: false, message: "正在安装固定 Codex" },
+    opencode: { phase: "ready", available: true, message: "OpenCode 已就绪" } } }
+  ui.evaluate("applyStatus(fixture)", status)
+  assert.equal(ui.elements.get("runBtn").disabled, true)
+  assert.equal(ui.elements.get("runBtn").textContent, "准备中…")
+  await ui.evaluate("run()")
+  assert.equal(ui.fetches.length, 0, "Enter cannot bypass an unavailable CLI")
+  assert.deepEqual(ui.read("store"), before)
+  assert.equal(ui.elements.get("prompt").value, "保留草稿")
+  status.cliStatus.codex = { phase: "error", available: false, message: "固定 Codex 安装失败" }
+  ui.evaluate("applyStatus(fixture)", status)
+  assert.equal(ui.elements.get("runBtn").textContent, "CLI 不可用")
+  assert.equal(ui.elements.get("cliMessage").textContent, "固定 Codex 安装失败")
+  ui.evaluate("harness='opencode'; setRun('idle')")
+  assert.equal(ui.elements.get("runBtn").disabled, false)
+  status.cliStatus.codex = { phase: "ready", available: true, message: "Codex 已就绪" }
+  ui.evaluate("harness='codex'; applyStatus(fixture)", status)
+  assert.equal(ui.elements.get("runBtn").disabled, false)
+  ui.evaluate("setRun('busy'); applyStatus(fixture)", status)
+  assert.equal(ui.elements.get("runBtn").disabled, true, "Polling must not unlock an active run")
+})
+
 test("synthetic: panel toggles preserve run history and can hide every workspace panel", () => {
   const ui = createFrontend()
   ui.event("viz.run", { sessionID: "root", prompt: "task" })
@@ -619,7 +647,7 @@ test("synthetic: request download preserves original JSON, not rebuilt context o
   const rendered = ui.evaluate("renderLlmCall(fixture)", { index: 2, harness: "codex", source: "native-trace", request, requestRaw: raw, modelInput })
   assert.ok(rendered.includes("下载 JSON") && rendered.includes("下载原文"))
   assert.match(rendered, /重建上下文（分析结果，非原始请求）/)
-  assert.match(rendered, /class="input-message" open><summary>2\. developer/)
+  assert.match(rendered, /class="input-message" open><summary>2\. 开发者要求（developer）/)
   assert.ok(rendered.includes(longText), "readable input must not truncate instructions")
   assert.equal(ui.read("requestCache[2]"), raw)
   assert.deepEqual(JSON.parse(ui.read("requestCache[2]")), request)
@@ -703,4 +731,111 @@ test("synthetic: a new run resets canonical records; late old-run failure remain
   assert.equal(ui.read("runState"), "busy")
   assert.deepEqual(ui.read('store["c-done"] ?? []'), [])
   assert.ok(rawSections(ui.elements.get("eventlog").children.at(-1).innerHTML).some(section => isDeepStrictEqual(section, late)))
+})
+
+test("synthetic: execution order retains tool starts/results, sorts reception times and never fabricates branches", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root", prompt: "task" }, { receivedAt: "2026-10-04T12:00:00Z" })
+  ui.event("llm.request", { index: 1, sessionID: "root", messages: 1, tools: ["read"] }, { receivedAt: "2026-10-04T12:00:01Z" })
+  ui.event("llm.response", { index: 1, sessionID: "root", toolCalls: ["read"], textChars: 0 }, { receivedAt: "2026-10-04T12:00:03Z" })
+  const part = { id: "p", sessionID: "root", type: "tool", tool: "read", callID: "call-1", state: { status: "running", input: { filePath: "fixture.txt" } } }
+  ui.event("message.part.updated", { part }, { receivedAt: "2026-10-04T12:00:02Z" })
+  ui.event("message.part.updated", { part }, { receivedAt: "2026-10-04T12:00:04Z" })
+  ui.event("message.part.updated", { part: { ...part, state: { ...part.state, status: "completed", output: "result" } } }, { receivedAt: "2026-10-04T12:00:05Z" })
+  assert.deepEqual(ui.read("execution.entries().map(r=>r.kind)"), ["start", "model-request", "tool-running", "model-response", "tool-completed"])
+  assert.equal(ui.read("execution.entries()[2].time"), "2026-10-04T12:00:02Z", "Later snapshots must not erase the original start")
+  const coverage = ui.read("execution.coverage()")
+  assert(coverage.tool && coverage.exec && coverage.llm)
+  assert.match(coverage.loop.labels[0], /输入可见；内部读取未跟踪/)
+  for (const node of ["decide", "decide2", "delegate", "outcome", "pre-sub", "subflow3"]) assert.equal(coverage[node], undefined)
+  ui.evaluate("renderExecution()")
+  assert.match(ui.elements.get("executionList").innerHTML, /工具开始执行：read/)
+  assert.equal(ui.elements.get("fn-tool").classList.contains("observed"), true)
+  assert.equal(ui.elements.get("fn-outcome").classList.contains("observed"), false)
+  assert.match(ui.elements.get("coverageList").innerHTML, /未直接记录，不能判断未执行/)
+})
+
+test("synthetic: child timeline is explicitly associated and filters do not destroy evidence", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.event("llm.request", { index: 2, sessionID: "child", tools: [] })
+  assert.equal(ui.read("execution.entries().length"), 1, "Unassociated child event waits for evidence")
+  ui.event("session.created", { info: { id: "child", parentID: "root" } })
+  const child = ui.read("execution.entries().find(r=>r.index===2)")
+  assert.equal(child.child, true)
+  assert.match(child.scope, /子会话/)
+  ui.elements.get("executionScope").value = "parent"
+  assert.equal(ui.read("visibleExecution().some(r=>r.child)"), false)
+  ui.elements.get("executionScope").value = "child"
+  assert.equal(ui.read("visibleExecution().length"), 2)
+  assert.equal(ui.read("execution.entries().length"), 3)
+  ui.evaluate("resetUI()")
+  assert.deepEqual(ui.read("execution.entries()"), [])
+})
+
+test("synthetic: duplicate idle reports merge, but a resumed session keeps its later idle", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.event("session.status", { sessionID: "root", status: { type: "idle" } })
+  ui.event("session.idle", { sessionID: "root" })
+  ui.event("session.status", { sessionID: "root", status: { type: "busy" } })
+  ui.event("session.status", { sessionID: "root", status: { type: "idle" } })
+  assert.equal(ui.read("execution.entries().filter(r=>r.kind==='idle').length"), 2)
+})
+
+test("synthetic: readable history separates a user task, model tool proposal and returned result without mutating payload", () => {
+  const ui = createFrontend()
+  const call = { index: 13, harness: "opencode", request: { system: "system-instructions", messages: [
+    { role: "user", content: [{ type: "text", text: "用户原问题" }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "task-call", name: "task", input: { prompt: "search" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "task-call", content: longText }] },
+  ], tools: [{ name: "task" }] } }
+  const before = structuredClone(call)
+  const rendered = ui.evaluate("renderHistory(fixture)", call)
+  assert.match(rendered, /用户任务或补充信息/)
+  assert.match(rendered, /模型提出工具调用/)
+  assert.match(rendered, /工具结果回传.*task/)
+  assert.match(rendered, /不是数据库完整历史/)
+  assert.match(rendered, /不是你又发了一条问题/)
+  assert(rendered.includes(longText), "Full returned content is still inspectable")
+  assert.deepEqual(call, before)
+  assert.deepEqual(JSON.parse(ui.read("requestCache[13]")), call.request)
+})
+
+test("synthetic: one model response displays both text and proposals, and proposal alone is not tool execution", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const call = { index: 1, harness: "opencode", sessionID: "root", request: { messages: [] },
+    response: { text: "先检查文件", toolUses: [{ name: "read", callID: "read-1", input: { filePath: "fixture" } }] } }
+  let rendered = ui.evaluate("renderLlmCall(fixture)", call)
+  assert.match(rendered, /模型响应 · 文字与工具调用/)
+  assert.match(rendered, /响应中的文字/)
+  assert.match(rendered, /模型提出调用：read/)
+  assert.match(rendered, /尚无关联的执行记录/)
+  assert.match(rendered, /定位工具执行记录<\/button>/)
+  assert.doesNotMatch(rendered, /已有工具结果／结束记录/)
+  const part = { id: "tool-part", sessionID: "root", type: "tool", tool: "read", callID: "read-1", state: { status: "completed", input: {}, output: "found" } }
+  ui.event("message.part.updated", { part })
+  rendered = ui.evaluate("renderLlmCall(fixture)", call)
+  assert.match(rendered, /已有工具结果／结束记录/)
+  assert.match(rendered, /onclick="focusToolCall\(1,0\)"/)
+})
+
+test("synthetic: request/response notifications stay separate from full API payloads", () => {
+  const ui = createFrontend()
+  const request = { type: "llm.request", id: "req", properties: { index: 1, messages: 3 }, receivedAt: "received", source: "proxy" }
+  const response = { type: "llm.response", id: "res", properties: { index: 1, textChars: 9 }, source: "proxy" }
+  const rendered = ui.evaluate("renderCaptureEvents(fixture)", { event: request, data: { responseEvent: response } })
+  assert.match(rendered, /精简通知，不是模型 API 的完整请求体或响应流/)
+  assert(rawSections(rendered).some(value => isDeepStrictEqual(value, request)))
+  assert(rawSections(rendered).some(value => isDeepStrictEqual(value, response)))
+})
+
+test("synthetic: missing history in a captured request is unknown rather than an empty conversation", () => {
+  const ui = createFrontend("codex")
+  const rendered = ui.evaluate("renderHistory(fixture)", { index: 1, harness: "codex", source: "native-trace", request: { instructions: "known", previous_response_id: "previous" } })
+  assert.match(rendered, /没有提供历史消息数组，不能推断历史为空/)
+  assert.match(rendered, /input: 未记录/)
+  assert.match(rendered, /更早内容可能由前序响应继承/)
+  assert.doesNotMatch(rendered, /input: 0 项/)
 })

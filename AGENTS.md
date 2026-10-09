@@ -2,13 +2,15 @@
 
 - `src/` 是后端，`public/` 是网页，`config/settings.json` 是用户配置；不要重新把配置放进运行目录。
 - `examples/demo/` 是默认工作目录，演示会直接读取、修改其中的文件，不复制工作目录。
-- `.runtime/` 保存认证、日志、trace、测试输出；全部忽略，不提交。测试代码放 `tests/`，验证脚本放 `scripts/`。
+- `.runtime/` 保存专用 CLI 缓存、认证、日志、trace、测试输出；全部忽略，不提交。测试代码放 `tests/`，验证脚本放 `scripts/`。
 - 统一用 `npm start` 启动；工作目录在 `config/settings.json` 的 `projectPath` 中设置，默认 `examples/demo`，不增加自定义启动参数。`npm test` 不调用模型；`npm run test:integration` 会调用真实模型并产生费用。
 - 浏览器检查：`npm run test:browser -- ".runtime/verification/<run>"`。加 `--record` 可生成公开演示素材，需要 Chromium 和 ffmpeg；发布前检查是否含敏感内容。
 - 后端/配置改动需重启；网页每次请求读取。PowerShell 5.1 不支持 `&&`，不要用输出重定向占住常驻进程的父 shell。
-- CLI 从 PATH 自动识别，支持官方独立安装和 npm 安装；探测与执行必须同一入口。版本锚点在 `src/versions.json`，前端 `SOURCE_PINS` 与它保持一致，不修改上游源码迁就观察器。
+- 网页入口默认 `127.0.0.1:4577`；内部代理与 OpenCode 使用自动端口，生成的 provider 地址必须使用实际监听端口。OpenCode 地址只从自身固定版本进程的完整 stdout 公告读取，再带随机认证核验健康版本；不探测／复用别人的服务。启动验证须覆盖被占用端口及默认端口分配，不能只在验证脚本里换端口掩盖应用缺陷。
+- CLI 按 `src/versions.json` 自动安装到 `.runtime/cli/<harness>/<version>/` 并缓存复用，不从全局 PATH 或旧 `CODEX_CLI_*` 覆盖选择 agent；探测与执行必须同一入口且严格核验版本。专用 OpenCode 关闭自动更新。网页先启动，准备状态与错误按 CLI 隔离；未就绪入口不得清空历史或启动任务。前端 `SOURCE_PINS` 与版本锚点保持一致，不修改上游源码迁就观察器。验证数据目录与 CLI 缓存分离；`VIZ_CLI_DIR` 仅用于开发隔离缓存。
 - 默认 Codex 为官方 `gpt-6.1-sol` + 原生 trace；第三方和 OpenCode 使用 `MiniMax-M3.1-Flash-Preview`。Preview 限制来自 [官方 Messages API](https://platform.minimax.io/docs/api-reference/text-chat-anthropic.md)，不得沿用 M3 价格或伪造价格。
 - 原始请求、响应与事件必须保留来源；区分直接观测、边界捕获和推断。不用请求数、消息数或 turn 数冒充内部迭代数。
+- 运行过程默认显示执行顺序，按 receivedAt 排列去重的关键事件；工具开始与终态分开保留，不能用最新快照覆盖先前顺序。父子会话依明确关联分类。持久节点标记只表示相关证据，未记录的判断不填造分支。读取历史展示实际请求中的可读材料，须标注内部数据库读取未跟踪；模型响应同时容纳文字与工具调用，工具执行证据按调用 ID 关联。API 原报文与观察器精简通知分层保留。`test:browser -- --live-opencode` 只读捕获并离线回放当前记录，不重启用户实例或提交模型任务。
 - 工具可在流期间执行；OpenCode compaction 标记不代表完成，task 工具不等于 preflight SubtaskPart，idle 不代表成功。reasoning/text delta 按 part 类型分类。
 - Codex 续接可只含增量 input；工具定义可在 `additional_tools`。缺失不表示零工具；stop hooks 可续行，完成事件不反推分支。
 - 不恢复宽泛 PowerShell allow 规则。隔离目录不是完整安全沙箱；Codex 原生模式复制用户认证，但不修改源认证/config。

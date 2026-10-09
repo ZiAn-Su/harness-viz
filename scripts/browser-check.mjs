@@ -9,17 +9,38 @@ import { withModelInputs } from "../src/trace.mjs"
 import { listTemplates, renderTemplatePreview } from "../src/template-preview.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-if (!process.argv[2]) throw new Error("Usage: node browser-check.mjs <verification-directory>")
-const evidence = path.resolve(process.argv[2])
-const results = JSON.parse(await readFile(path.join(evidence, "results.json"), "utf8"))
+const liveOpencode = process.argv.includes("--live-opencode")
+if (!process.argv[2]) throw new Error("Usage: node browser-check.mjs <verification-directory> | --live-opencode")
+const evidence = liveOpencode ? path.join(root, ".runtime", "verification", new Date().toISOString().replace(/[:.]/g, "-") + "-live-opencode") : path.resolve(process.argv[2])
 const runs = {}, calls = []
+let results
+if (liveOpencode) {
+  await mkdir(evidence, { recursive: true })
+  const base = process.env.VIZ_BASE_URL ?? "http://127.0.0.1:4577"
+  const captured = await Promise.all(["/api/status", "/api/last-run?harness=opencode", "/api/llm-calls"].map(async route => {
+    const response = await fetch(base + route, { signal: AbortSignal.timeout(30000) })
+    assert(response.ok, "Read-only capture failed: " + route)
+    return response.json()
+  }))
+  results = { status: captured[0], mode: "read-only OpenCode capture", checkedAt: new Date().toISOString() }
+  runs.opencode = captured[1]
+  assert(runs.opencode.events?.length && !runs.opencode.active, "A completed OpenCode run is required")
+  calls.push(...captured[2].calls.filter(call => call.harness === "opencode" && call.runID === runs.opencode.runID))
+  runs.codex = { sessionID: null, events: [] } // Outside this replay's scope.
+  await writeFile(path.join(evidence, "results.json"), JSON.stringify(results, null, 2))
+  await writeFile(path.join(evidence, "opencode-proof.txt-events.json"), JSON.stringify(runs.opencode, null, 2))
+  await writeFile(path.join(evidence, "opencode-proof.txt-calls.json"), JSON.stringify(calls, null, 2))
+} else {
+  results = JSON.parse(await readFile(path.join(evidence, "results.json"), "utf8"))
+  for (const [h, filename] of [["codex", "codex-proof.txt"], ["opencode", "opencode-proof.txt"]]) {
+    runs[h] = JSON.parse(await readFile(path.join(evidence, `${h}-${filename}-events.json`), "utf8"))
+    calls.push(...JSON.parse(await readFile(path.join(evidence, `${h}-${filename}-calls.json`), "utf8")))
+  }
+}
 const recordDemo = process.argv.includes("--record")
 let replaying = false
+let cliOverride = null
 const replayEvents = { codex: [], opencode: [] }, subscribers = new Set(), replayTimers = new Set()
-for (const [h, filename] of [["codex", "codex-proof.txt"], ["opencode", "opencode-proof.txt"]]) {
-  runs[h] = JSON.parse(await readFile(path.join(evidence, `${h}-${filename}-events.json`), "utf8"))
-  calls.push(...JSON.parse(await readFile(path.join(evidence, `${h}-${filename}-calls.json`), "utf8")))
-}
 const html = await readFile(path.join(root, "public", "index.html"))
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1")
@@ -66,7 +87,14 @@ const server = createServer(async (req, res) => {
     } catch (err) { res.statusCode = 502; res.end(JSON.stringify({ error: String(err?.message ?? err) })) }
     return
   }
-  const data = url.pathname === "/api/status" ? results.status
+  if (url.pathname === "/qa/cli-status" && req.method === "POST") {
+    let raw = ""
+    for await (const chunk of req) raw += chunk
+    cliOverride = JSON.parse(raw)
+    res.setHeader("Content-Type", "application/json"); res.end('{"ok":true}')
+    return
+  }
+  const data = url.pathname === "/api/status" ? { ...results.status, ...(cliOverride ? { cliStatus: cliOverride } : {}) }
     : url.pathname === "/api/last-run" ? replaying ? { events: [] } : runs[url.searchParams.get("harness")]
     : url.pathname === "/api/llm-calls" ? { calls: withModelInputs(calls) }
     : url.pathname === "/api/templates" ? { templates: listTemplates() }
@@ -185,6 +213,30 @@ try {
   assert(await evaluate('document.querySelector("#colFlow").hidden && document.querySelector("#colLlm").hidden && !document.querySelector("#colTx").hidden'))
   await evaluate('document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click()')
   checks.push("Header controls, single-line hidden composer, independent panels, reflow and persisted preferences")
+  // Synthetic preparation states on top of real recorded evidence. Polling must
+  // update controls without resetting transcripts, records, or a prompt draft.
+  const beforePreparation = await evaluate('({ count: document.querySelector("#llmBadge").textContent, log: document.querySelector("#logCount").textContent })')
+  const ready = { phase: "ready", available: true, message: "固定 CLI 已就绪" }
+  const setCli = async codex => evaluate(`fetch("/qa/cli-status", { method: "POST", body: JSON.stringify(${JSON.stringify({ codex, opencode: ready })}) })`)
+  await evaluate('document.querySelector("#toggle-input").click(); document.querySelector("#prompt").value="安装期间保留的草稿"')
+  await setCli({ phase: "installing", available: false, message: "正在安装固定 Codex…" })
+  await wait('document.querySelector("#runBtn").disabled && document.querySelector("#runBtn").textContent === "准备中…"')
+  assert.deepEqual(await evaluate('({ count: document.querySelector("#llmBadge").textContent, log: document.querySelector("#logCount").textContent })'), beforePreparation)
+  assert.equal(await evaluate('document.querySelector("#prompt").value'), "安装期间保留的草稿")
+  await setCli({ phase: "error", available: false, message: "固定 Codex 下载失败：检查 npm 网络后重启 npm start。" })
+  await wait('document.querySelector("#runBtn").textContent === "CLI 不可用"')
+  await evaluate('document.querySelector("#runInfo").open=true')
+  await screenshot("cli-preparation-error")
+  await evaluate('document.querySelector("#runInfo").open=false; switchHarness("opencode")')
+  assert.equal(await evaluate('document.querySelector("#runBtn").disabled'), false)
+  await setCli(ready)
+  await evaluate('switchHarness("codex")')
+  await wait('!document.querySelector("#runBtn").disabled')
+  await evaluate('setRun("busy")')
+  await delay(2200)
+  assert(await evaluate('document.querySelector("#runBtn").disabled && !document.querySelector("#abortBtn").hidden'))
+  await evaluate('setRun("ended"); document.querySelector("#toggle-input").click()')
+  checks.push("CLI preparation/error polling isolates buttons, preserves real evidence/draft and never unlocks an active run (synthetic states)")
   await mkdir(downloads, { recursive: true })
   await command("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads })
   await evaluate('document.querySelector("[data-h=opencode]").click()')
@@ -193,11 +245,47 @@ try {
   assert.equal(await evaluate(`document.querySelectorAll("#transcript .user").length`), 1)
   assert(await evaluate(`[...document.querySelectorAll("#transcript .assistant .body")].every(body => body.dataset.rawText !== ${JSON.stringify(originalPrompt)})`))
   checks.push("OpenCode user-message events are not mislabelled as assistant")
+  await wait('execution.entries().filter(row=>row.kind === "model-request").length === ' + calls.filter(call => call.harness === "opencode").length)
+  assert(await evaluate('execution.entries().every((row,n,rows)=>!n || Date.parse(rows[n-1].time)<=Date.parse(row.time))'))
+  assert(await evaluate('!execution.coverage().outcome && !execution.coverage().subflow3 && !execution.coverage()["pre-sub"]'), "Observed responses must not fabricate internal branches")
+  const rowsBeforeFilter = await evaluate('execution.entries().length')
+  await evaluate('document.querySelector("#executionScope").value="parent"; document.querySelector("#executionScope").onchange()')
+  assert(await evaluate('visibleExecution().every(row=>!row.child && !row.scope.startsWith("未关联"))'))
+  await evaluate('document.querySelector("#executionScope").value="all"; document.querySelector("#executionScope").onchange()')
+  assert.equal(await evaluate('execution.entries().length'), rowsBeforeFilter)
+  const firstModelIndex = await evaluate('execution.entries().findIndex(row=>row.kind === "model-response")')
+  await evaluate(`focusExecution(${firstModelIndex})`)
+  await wait('document.querySelector("#nodePanel .model-output") != null')
+  assert(await evaluate('document.querySelector("#fn-llm").classList.contains("step-focus") && document.querySelector("#executionEvent").textContent.includes("llm.response")'))
+  assert(await evaluate('document.querySelector("#nodePanel .model-output").textContent.includes("工具调用也是") || document.querySelector("#nodePanel .model-output").textContent.includes("工具调用表示模型提出动作")'))
+  await evaluate('document.querySelector("#nodePanel .model-output").scrollIntoView({block:"center"})')
+  await screenshot("opencode-execution-order")
+  const proposal = calls.find(call => call.harness === "opencode" && call.response?.toolUses?.length)
+  if (proposal) {
+    await evaluate(`focusExecution(execution.entries().findIndex(row=>row.kind === "model-response" && row.index === ${proposal.index}))`)
+    await wait('document.querySelector("#nodePanel .output-tool button:not([disabled])") != null')
+    await evaluate('document.querySelector("#nodePanel .output-tool button:not([disabled])").click()')
+    assert(await evaluate('execution.entries().find(row=>row.key===executionSelectedKey).callID != null'))
+    assert(await evaluate('document.querySelector("#executionEvent").textContent.includes("message.part.updated")'))
+  }
+  await evaluate('activeTab="records"; selectNode("loop")')
+  await wait('document.querySelector("#nodePanel .history-summary") != null')
+  assert(await evaluate('document.querySelector("#nodePanel .detail").textContent.includes("不是数据库完整历史") || [...document.querySelectorAll("#nodePanel .detail")].some(detail=>detail.textContent.includes("不是数据库完整历史"))'))
+  if (liveOpencode) {
+    assert.equal(await evaluate('execution.entries().filter(row=>row.kind==="model-request" && !row.child).length'), calls.filter(call => call.sessionID === runs.opencode.sessionID).length)
+    assert(await evaluate('document.querySelector("#nodePanel .history-summary").textContent.includes("工具结果回传")'))
+    await evaluate('selectNode("tool")')
+    assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("由子会话执行")'), "Child execution must remain visible without inventing a parent tool branch")
+    await evaluate('selectNode("loop")')
+    await wait('document.querySelector("#nodePanel .history-summary") != null')
+  }
+  await screenshot("opencode-readable-history")
+  checks.push("Chronological observed execution, main/child filtering, exact tool linkage, readable history and unobserved branches kept unknown")
   await verifyFlowDocs("opencode")
-  await evaluate('document.querySelector("#fn-llm").click(); document.querySelector("#nodePanel .rec .hd").click()')
+  await evaluate('document.querySelector("#fn-llm").click(); const firstModelRecord=document.querySelector("#nodePanel .rec"); if(!firstModelRecord.classList.contains("open")) firstModelRecord.querySelector(".hd").click()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
   assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("请求输入")'))
-  assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.textContent.includes("system")'))
+  assert(await evaluate('[...document.querySelectorAll("#nodePanel .input-message")].some(item=>!item.open && item.querySelector("summary").textContent.includes("system"))'))
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("messages")'))
   await verifyDownload(calls.find(call => call.harness === "opencode"))
   checks.push("OpenCode browser download equals the captured forwarded API body")
@@ -225,12 +313,13 @@ try {
   await delay(200)
   await screenshot("opencode-desktop")
   checks.push("OpenCode real-event replay and full request panel")
+  if (!liveOpencode) {
   await evaluate('document.querySelector("[data-h=codex]").click()')
   await wait(`document.querySelector("#llmBadge")?.textContent === "捕获请求: ${calls.filter(call => call.harness === "codex").length}"`)
   await verifyFlowDocs("codex")
   assert(await evaluate('!document.querySelector("#fn-c-loop, #fn-c-precompact, #fn-c-history, #fn-c-perm") && document.querySelector("#fn-c-sandbox").dataset.shape === "environment" && document.querySelector("#fn-c-sub").dataset.shape === "subprocess" && document.querySelector("#fn-c-compact-next").dataset.shape === "decision"'), "teaching view must show per-handler permissions and the actual post-compaction branch")
   assert(await evaluate('store["c-sandbox"]?.some(record => record.data.sandbox === "workspace-write" && record.data.approvalPolicy === "never")'), "real launch configuration must be available at the sandbox node")
-  await evaluate('document.querySelector("#nodePanel .rec .hd").click()')
+  await evaluate('const firstCodexRecord=document.querySelector("#nodePanel .rec"); if(!firstCodexRecord.classList.contains("open")) firstCodexRecord.querySelector(".hd").click()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("native-trace")'))
   assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.querySelector("summary").textContent.includes("developer")'))
@@ -255,8 +344,9 @@ try {
   await screenshot("codex-template-preview")
   await screenshot("codex-desktop")
   checks.push("Codex native-trace replay, source labeling and full request panel")
+  }
   const markdown = '# Markdown 排版\n\n支持 **重点**、`行内代码` 和 [源码链接](https://github.com/openai/codex)。\n\n## 请求生命周期\n\n1. 组织上下文\n2. 执行工具\n3. 反馈结果\n\n> 工具结果进入下一次请求。\n\n| 阶段 | 内容 |\n| --- | --- |\n| 输入 | 指令与历史 |\n| 工具 | 文件与命令 |\n\n```js\nconst result = await runTool();\n```\n\n- [x] 完成读取\n- [ ] 等待修改'
-  await evaluate('document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click(); document.querySelector("#transcript").innerHTML = ""')
+  await evaluate('setProcessView("transcript"); document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click(); document.querySelector("#transcript").innerHTML = ""')
   await evaluate(`appendText("qa-markdown", ${JSON.stringify(markdown)}, "text", false); bubbles["qa-markdown"].parentElement.querySelector(".who").textContent = "Markdown 排版测试"`)
   await wait('document.querySelector("#transcript .markdown table") != null')
   assert(await evaluate('document.querySelector("#transcript .markdown h1") && document.querySelector("#transcript .markdown strong") && document.querySelector("#transcript .markdown ol") && document.querySelector("#transcript .markdown blockquote") && document.querySelector("#transcript .markdown pre code.language-js")'))
@@ -272,6 +362,10 @@ try {
   assert(await evaluate("document.documentElement.scrollWidth <= window.innerWidth"), "Mobile horizontal overflow")
   await screenshot("codex-mobile")
   checks.push("390px mobile layout without page horizontal overflow")
+  await evaluate('setProcessView("execution"); setView("transcript",true)')
+  assert(await evaluate('!document.querySelector("#executionView").hidden && document.documentElement.scrollWidth<=innerWidth'))
+  await screenshot("execution-mobile")
+  checks.push("390px observed-execution timeline and controls fit without horizontal overflow")
   assert.equal(errors.length, 0, "Browser JS errors")
   if (recordDemo) {
     // Record actual UI operations over an accelerated replay, not a new model run.

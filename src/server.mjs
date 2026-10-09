@@ -13,7 +13,8 @@ import { randomUUID } from "node:crypto"
 import os from "node:os"
 import { readTraceEvents, summarizeResponse, requestTools, withModelInputs } from "./trace.mjs"
 import { listTemplates, renderTemplatePreview } from "./template-preview.mjs"
-import { resolveCodexLauncher } from "./cli.mjs"
+import { preparePinnedCli } from "./cli.mjs"
+import { listenLocal, openCodeRequestedPort, opencodeListeningPort } from "./ports.mjs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -21,6 +22,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 if (process.argv.length > 2) throw new Error("请使用 npm start 启动；项目目录在 config/settings.json 的 projectPath 中设置。")
 const CFG = JSON.parse(await readFile(process.env.VIZ_CONFIG_PATH ?? path.join(ROOT, "config", "settings.json"), "utf8"))
 const RUNTIME_DIR = path.resolve(process.env.VIZ_RUNTIME_DIR ?? path.join(ROOT, ".runtime"))
+// Verification runs isolate their data but reuse the repository's pinned binaries.
+const CLI_DIR = path.resolve(process.env.VIZ_CLI_DIR ?? path.join(ROOT, ".runtime", "cli"))
 const projectPath = process.env.VIZ_TARGET_PROJECT || CFG.projectPath
 const TARGET_PROJECT = path.resolve(ROOT, projectPath || "examples/demo")
 await mkdir(RUNTIME_DIR, { recursive: true })
@@ -34,11 +37,11 @@ console.log = (...args) => {
   appendFile(SELF_LOG, args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\n").catch(() => {})
 }
 
-const VIZ_PORT = Number(process.env.VIZ_PORT ?? 4577)   // 浏览器入口
-const OC_PORT = Number(process.env.OC_PORT ?? 45321)    // opencode serve
-const LLM_PORT = Number(process.env.LLM_PORT ?? 45322)  // LLM 代理
+let VIZ_PORT = Number(process.env.VIZ_PORT ?? 4577)     // 浏览器入口
+let OC_PORT = Number(process.env.OC_PORT ?? 0)          // owned OpenCode listener
+let LLM_PORT = Number(process.env.LLM_PORT ?? 0)        // owned proxy listener
 const HOST = "127.0.0.1"
-const OC_BASE = `http://${HOST}:${OC_PORT}`
+let OC_BASE = null
 const OC_PASSWORD = randomUUID()
 const AUTH = "Basic " + Buffer.from(`opencode:${OC_PASSWORD}`).toString("base64")
 
@@ -49,22 +52,44 @@ let child = null
 let ocReady = false
 let codexProc = null   // codex exec 子进程（每次运行一个）
 
-/* ── CLI 版本探测（适配性锚点：README「版本适配」表） ── */
+/* ── 专用固定 CLI：网页先启动，两个入口分别准备／失败 ── */
 const versions = { opencode: "?", codex: "?" }
-const { command: codexCommand, prefix: codexPrefix } = await resolveCodexLauncher()
-async function detectVersions() {
-  const { execFile } = await import("node:child_process")
-  const { promisify } = await import("node:util")
-  const run = promisify(execFile)
-  try { versions.opencode = (await run("opencode", ["--version"], { shell: process.platform === "win32", timeout: 15000 })).stdout.trim() } catch {}
+let codexCommand = null, codexPrefix = [], ocLauncher = null
+const setupProcesses = new Set()
+const cliStatus = Object.fromEntries(["opencode", "codex"].map(h => [h, {
+  phase: "pending", available: false, version: SOURCE_LOCK[h].version, message: "等待准备固定 CLI…", error: null,
+}]))
+function updateCliStatus(harness, patch) {
+  const previous = cliStatus[harness].message
+  Object.assign(cliStatus[harness], patch)
+  if (patch.message && patch.message !== previous) console.log(`[viz] ${harness}: ${patch.message}`)
+}
+async function prepareHarness(harness) {
   try {
-    versions.codex = (await run(codexCommand, [...codexPrefix, "--version"], { timeout: 30000 })).stdout.trim()
-  } catch {}
-  console.log(`[viz] opencode ${versions.opencode} · codex ${versions.codex}`)
-  for (const h of ["codex", "opencode"]) {
-    if (versions[h].replace(/^codex-cli\s+/, "") !== SOURCE_LOCK[h].version) {
-      throw new Error(`${h} CLI ${versions[h]} does not match audited source ${SOURCE_LOCK[h].tag}`)
+    const launcher = await preparePinnedCli({ harness, version: SOURCE_LOCK[harness].version, cacheRoot: CLI_DIR,
+      onState: state => updateCliStatus(harness, state), onProcess: proc => {
+        setupProcesses.add(proc)
+        proc.once("close", () => setupProcesses.delete(proc))
+      } })
+    versions[harness] = launcher.version
+    updateCliStatus(harness, { phase: "starting", message: "固定版本已核验，正在准备运行环境…",
+      executable: launcher.command, launcher: launcher.prefix[0] ?? null, directory: launcher.directory })
+    if (harness === "codex") {
+      codexCommand = launcher.command
+      codexPrefix = launcher.prefix
+      await ensureCodexHome()
+      console.log(`[viz] codex CODEX_HOME: ${CODEX_HOME}; capture=${CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy"}`)
+    } else {
+      ocLauncher = launcher
+      await startOpencode()
+      await waitReady()
+      upstreamLoop()
     }
+    updateCliStatus(harness, { phase: "ready", available: true, message: `专用 ${harness} ${SOURCE_LOCK[harness].version} 已就绪`, error: null })
+  } catch (err) {
+    const error = String(err?.message ?? err)
+    if (harness === "opencode") { failOpencode(error); killProcess(child) }
+    else updateCliStatus(harness, { phase: "error", available: false, message: error.split("\n")[0], error })
   }
 }
 
@@ -73,7 +98,8 @@ async function detectVersions() {
  * useDefaultModel=true：不写 model_provider，codex 直接用自带默认模型（ChatGPT 登录或
   * API key），流量不经代理；请求上下文由本地原生 rollout trace 捕获。 */
 const CODEX_HOME = path.join(RUNTIME_DIR, "codex-home")
-const CODEX_CONFIG = `model = ${JSON.stringify(CFG.codex.model)}
+function codexConfig() {
+  return `model = ${JSON.stringify(CFG.codex.model)}
 approval_policy = "never"
 ` + (CFG.codex.useDefaultModel ? "" : `
 model_provider = "viz"
@@ -87,9 +113,10 @@ wire_api = "responses"
 [windows]
 sandbox = "unelevated"
 `
+}
 async function ensureCodexHome() {
   await mkdir(CODEX_HOME, { recursive: true })
-  await writeFile(path.join(CODEX_HOME, "config.toml"), CODEX_CONFIG)
+  await writeFile(path.join(CODEX_HOME, "config.toml"), codexConfig())
   /* useDefaultModel 时还要把用户的 ChatGPT 登录态复制进来（只拷贝，绝不动原文件），
    * 否则隔离 CODEX_HOME 里没有凭据，codex 会要求登录。 */
   if (CFG.codex.useDefaultModel) {
@@ -135,19 +162,26 @@ function broadcast(payload) {
 }
 
 /* ── 拉起隔离的 opencode serve ─────────────────────────── */
+function failOpencode(error) {
+  ocReady = false
+  updateCliStatus("opencode", { phase: "error", available: false,
+    message: error.split("\n")[0] + (error.includes("\n") ? "；详细原因见「专用 CLI」，修复后重启 npm start。" : ""), error })
+  const run = runs.opencode
+  if (run.active) {
+    run.active = false
+    broadcast({ harness: "opencode", runID: run.runID, type: "session.error", source: "viz",
+      properties: { sessionID: run.sessionID, error: { name: "SubmissionError", message: error } } })
+  }
+}
 async function startOpencode() {
-  let existing
-  try {
-    existing = await oc("/global/health", { signal: AbortSignal.timeout(5000) })
-  } catch {}
-  if (existing) throw new Error(`Port ${OC_PORT} is occupied; refusing to reuse an unverified OpenCode server`)
+  OC_PORT = await openCodeRequestedPort(OC_PORT, HOST)
   const home = path.join(RUNTIME_DIR, "opencode-home")
   const configDir = path.join(home, "config")
   await mkdir(configDir, { recursive: true })
   const catalogPath = path.join(home, "models.json")
   await writeFile(catalogPath, "{}") // Prevent the embedded catalog from adding unrelated models.
   await writeFile(path.join(configDir, "opencode.json"), JSON.stringify({
-    model: OC_MODEL, small_model: OC_MODEL, enabled_providers: ["minimax"], permission: { edit: "ask" },
+    model: OC_MODEL, small_model: OC_MODEL, autoupdate: false, enabled_providers: ["minimax"], permission: { edit: "ask" },
     provider: { minimax: { name: "MiniMax", env: [CFG.upstreamEnvKey], npm: "@ai-sdk/anthropic",
       api: `http://${HOST}:${LLM_PORT}/anthropic/v1`, models: { [CFG.opencode.model]: {
         name: CFG.opencode.model, attachment: true, reasoning: true, temperature: true, tool_call: true,
@@ -167,26 +201,41 @@ async function startOpencode() {
     OPENCODE_DISABLE_PROJECT_CONFIG: "1",
     OPENCODE_MODELS_PATH: catalogPath,
     OPENCODE_DISABLE_MODELS_FETCH: "1",
+    OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_SERVER_PASSWORD: OC_PASSWORD,
     OPENCODE_CLIENT: "harness-viz",
     OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
   }
-  child = spawn("opencode", ["serve", "--port", String(OC_PORT), "--hostname", HOST], {
+  child = spawn(ocLauncher.command, [...ocLauncher.prefix, "serve", "--port", String(OC_PORT), "--hostname", HOST], {
     env,
     cwd: TARGET_PROJECT,
-    shell: process.platform === "win32",
     stdio: ["ignore", "pipe", "pipe"],
   })
-  child.stdout.on("data", (d) => process.stdout.write(`[opencode] ${d}`))
+  let announcement = ""
+  const stdoutDecoder = new TextDecoder()
+  child.stdout.on("data", (d) => {
+    process.stdout.write(`[opencode] ${d}`)
+    if (OC_BASE) return
+    announcement = (announcement + stdoutDecoder.decode(d, { stream: true })).slice(-16384)
+    const port = opencodeListeningPort(announcement, HOST)
+    if (!port) return
+    OC_PORT = port
+    OC_BASE = `http://${HOST}:${OC_PORT}`
+    console.log(`[viz] OpenCode 内部地址: ${OC_BASE}`)
+  })
   child.stderr.on("data", (d) => process.stdout.write(`[opencode:err] ${d}`))
+  child.on("error", err => failOpencode(err.message))
   child.on("exit", (code, signal) => {
     ocReady = false
     console.log(`[opencode] 进程退出 code=${code} signal=${signal}`)
+    const error = `OpenCode 服务已退出（code=${code}, signal=${signal}）；请重启 npm start。`
+    if (cliStatus.opencode.phase !== "error") failOpencode(error)
   })
 }
 
 async function oc(pathname, init = {}) {
+  if (!OC_BASE) throw new Error("OpenCode 服务尚未报告监听地址")
   return fetch(OC_BASE + pathname, {
     ...init,
     headers: {
@@ -201,6 +250,7 @@ async function oc(pathname, init = {}) {
 async function waitReady(timeoutMs = 90_000) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
+    if (cliStatus.opencode.phase === "error") throw new Error(cliStatus.opencode.error)
     try {
       const res = await oc("/global/health", { signal: AbortSignal.timeout(5000) })
       if (res.ok) {
@@ -774,7 +824,9 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/status") {
       json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: CFG.codex.model, codexCapture: true,
         codexCaptureSource: CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy", ocModel: OC_MODEL,
-        versions, sourceLock: SOURCE_LOCK, codexExecutable: codexCommand, codexLauncher: codexPrefix[0] ?? null })
+        versions, sourceLock: SOURCE_LOCK, cliStatus, cliDirectory: CLI_DIR,
+        ports: { visualization: VIZ_PORT, opencode: OC_BASE ? OC_PORT : null, llm: LLM_PORT || null },
+        codexExecutable: codexCommand, codexLauncher: codexPrefix[0] ?? null })
       return
     }
 
@@ -820,6 +872,7 @@ const server = createServer(async (req, res) => {
       const { prompt, model, harness = "opencode" } = await readBody(req)
       if (!["codex", "opencode"].includes(harness)) return json(res, { error: "Unknown harness" }, 400)
       if (typeof prompt !== "string" || !prompt.trim()) return json(res, { error: "prompt 不能为空" }, 400)
+      if (!cliStatus[harness].available) return json(res, { error: cliStatus[harness].error ?? cliStatus[harness].message, cliStatus: cliStatus[harness] }, 503)
       if (Object.values(runs).some(run => run.active)) return json(res, { error: "A run is active; abort or wait before starting another task" }, 409)
       for (let i = llmCalls.length - 1; i >= 0; i--) if ((llmCalls[i].harness ?? "opencode") === harness) llmCalls.splice(i, 1)
       runs[harness] = { sessionID: null, events: [], runID: randomUUID(), active: true, versions: { ...versions },
@@ -914,33 +967,27 @@ const server = createServer(async (req, res) => {
 })
 
 async function main() {
-  console.log("[viz] 正在拉起隔离的 opencode serve ...")
   console.log(`[viz] 目标项目目录: ${TARGET_PROJECT}`)
   console.log(`[viz] LLM 上游: ${LLM_UPSTREAM}`)
-  await ensureCodexHome()
-  await detectVersions()
-  console.log(`[viz] codex CODEX_HOME: ${CODEX_HOME}; capture=${CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy"}`)
-  await new Promise((resolve, reject) => {
-    llmProxy.once("error", reject)
-    llmProxy.listen(LLM_PORT, HOST, resolve)
-  })
-  await startOpencode()
-  await waitReady()
-  upstreamLoop()
-  await new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(VIZ_PORT, HOST, resolve)
-  })
+  try { VIZ_PORT = await listenLocal(server, { port: VIZ_PORT, host: HOST, fallback: false }) } catch (err) {
+    if (["EADDRINUSE", "EACCES"].includes(err.code)) throw new Error(`网页端口 ${VIZ_PORT} 被占用或不可用；请检查是否已启动 harness-viz，关闭已有实例后重试 npm start。`, { cause: err })
+    throw err
+  }
   console.log(`[viz] 可视化页面: http://${HOST}:${VIZ_PORT}`)
+  console.log(`[viz] 专用 CLI 缓存: ${CLI_DIR}`)
+  LLM_PORT = await listenLocal(llmProxy, { port: LLM_PORT, host: HOST })
+  console.log(`[viz] 模型代理内部地址: http://${HOST}:${LLM_PORT}`)
+  await Promise.all([prepareHarness("opencode"), prepareHarness("codex")])
 }
 
+function killProcess(proc) {
+  if (!proc?.pid || proc.exitCode !== null) return
+  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
+  else { try { proc.kill() } catch {} }
+}
 function shutdown(exitCode = 0) {
   console.log("\n[viz] 正在退出，关闭子进程 ...")
-  for (const proc of [child, codexProc]) {
-    if (!proc?.pid) continue
-    if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
-    else { try { proc.kill() } catch {} }
-  }
+  for (const proc of [...setupProcesses, child, codexProc]) killProcess(proc)
   process.exit(exitCode)
 }
 if (process.send) process.on("message", message => { if (message === "shutdown") shutdown() })

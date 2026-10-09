@@ -14,7 +14,9 @@ function section(start, end = "\n/*") {
   return source.slice(from, to)
 }
 const implementation = [
+  section("function updateCliStatus(", "\nasync function prepareHarness("),
   section("function broadcast("),
+  section("function failOpencode(", "\nasync function startOpencode("),
   section("function parseAnthropicSSE("),
   section("function responsesToAnthropic(", "\n/**"),
   section("async function handleCodexResponses("),
@@ -30,9 +32,11 @@ function backend(overrides = {}) {
     withModelInputs,
     console: { log() {}, error() {} },
     createServer: callback => callback,
-    HOST: "127.0.0.1", VIZ_PORT: 4577, LLM_PORT: 45322,
+    HOST: "127.0.0.1", VIZ_PORT: 4577, LLM_PORT: 45322, OC_PORT: 45321, OC_BASE: "http://127.0.0.1:45321",
     LLM_UPSTREAM: "https://synthetic.invalid",
     TARGET_PROJECT: "synthetic-project", SOURCE_LOCK: {}, versions: {},
+    ocReady: true, CLI_DIR: "synthetic-cli-cache", codexCommand: "synthetic-node", codexPrefix: ["synthetic-codex.js"],
+    cliStatus: { opencode: { available: true, phase: "ready" }, codex: { available: true, phase: "ready" } },
     OC_MODEL: "fixture/model",
     CFG: { upstreamEnvKey: "SYNTHETIC_KEY", opencode: { model: "fixture/model" }, codex: { model: "fixture", useDefaultModel: false } },
     process: { env: { SYNTHETIC_KEY: "not-a-real-key" } },
@@ -52,7 +56,7 @@ function backend(overrides = {}) {
     },
     runCodex: async () => { assert.fail("Unexpected subprocess launch") },
   }
-  const handlers = vm.runInNewContext(implementation + "\n;({ server, llmProxy, broadcast })", context, { filename: "server.mjs (extracted)", timeout: 1000 })
+  const handlers = vm.runInNewContext(implementation + "\n;({ server, llmProxy, broadcast, failOpencode })", context, { filename: "server.mjs (extracted)", timeout: 1000 })
   return { ...handlers, context, fetches, ocRequests, persisted, events: () => wire.flatMap(line => sseEvents(line)) }
 }
 
@@ -157,6 +161,46 @@ test("synthetic admitted session creation failure releases its own lock for retr
   assert.notEqual(b.context.runs.opencode.runID, failed.runID)
   assert.equal(b.context.runs.opencode.active, false)
   assert.equal(b.ocRequests.length, 2)
+})
+
+test("unavailable CLI returns 503 without clearing history or blocking the other harness", async () => {
+  const b = backend({ oc: async () => { throw new Error("synthetic OC submission reached") } })
+  b.context.cliStatus.codex = { available: false, phase: "error", error: "synthetic install failed" }
+  const previous = b.context.runs.codex
+  b.context.llmCalls.push({ harness: "codex", index: 1 })
+  const rejected = response()
+  await b.server(request({ body: { harness: "codex", prompt: "task" } }), rejected)
+  assert.equal(rejected.statusCode, 503)
+  assert.equal(JSON.parse(rejected.body).error, "synthetic install failed")
+  assert.strictEqual(b.context.runs.codex, previous)
+  assert.equal(b.context.llmCalls.length, 1)
+  assert.equal(b.events().length, 0)
+  const accepted = response()
+  await b.server(request(), accepted)
+  assert.equal(b.ocRequests.length, 1, "The other CLI remains runnable")
+  assert.match(JSON.parse(accepted.body).error, /OC submission reached/)
+  const status = response()
+  await b.server(request({ url: "/api/status", method: "GET" }), status)
+  assert.equal(status.statusCode, 200)
+  assert.equal(JSON.parse(status.body).cliStatus.codex.phase, "error")
+})
+
+test("owned OpenCode service failure releases only its active run and reports a local error", () => {
+  const b = backend()
+  b.context.runs.opencode.active = true
+  b.context.runs.opencode.sessionID = "synthetic-session"
+  const other = b.context.runs.codex
+  b.failOpencode("synthetic service exit\nfull diagnostic")
+  assert.equal(b.context.ocReady, false)
+  assert.equal(b.context.cliStatus.opencode.available, false)
+  assert.equal(b.context.runs.opencode.active, false)
+  assert.strictEqual(b.context.runs.codex, other)
+  assert.equal(b.context.cliStatus.codex.available, true)
+  const event = b.events().find(event => event.type === "session.error")
+  assert.equal(event.source, "viz")
+  assert.equal(event.runID, "oc-current")
+  assert.equal(event.properties.error.name, "SubmissionError")
+  assert.equal(event.properties.error.message, "synthetic service exit\nfull diagnostic")
 })
 
 test("broadcast preserves explicit old/null ownership without storing it in current replay", () => {

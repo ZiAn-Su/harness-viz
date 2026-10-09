@@ -1,9 +1,11 @@
 // Opt-in integration verification. Real model calls; only disposable fixtures are edited.
 import { spawn, spawnSync } from "node:child_process"
-import { readFile, writeFile, mkdir, access } from "node:fs/promises"
+import { createServer } from "node:net"
+import { readFile, writeFile, mkdir, access, symlink } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import assert from "node:assert/strict"
+import { listenLocal } from "../src/ports.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const smokeOnly = process.argv.includes("--smoke")
@@ -14,9 +16,19 @@ await mkdir(target, { recursive: true })
 const marker = "HARNESS_EVIDENCE_" + Date.now()
 await writeFile(path.join(target, "evidence-input.txt"), marker + "\n")
 await writeFile(path.join(target, "AGENTS.md"), "Use only files in this fixture directory. Never access credentials or user directories.\n")
-const base = "http://127.0.0.1:4597"
+async function freePort() {
+  const socket = createServer()
+  await new Promise((resolve, reject) => { socket.once("error", reject); socket.listen(0, "127.0.0.1", resolve) })
+  const port = socket.address().port
+  await new Promise(resolve => socket.close(resolve))
+  return port
+}
+const vizPort = await freePort()
+const base = `http://127.0.0.1:${vizPort}`
 const results = { checkedAt: new Date().toISOString(), marker, target, checks: [] }
+const sourceLock = JSON.parse(await readFile(path.join(root, "src", "versions.json"), "utf8"))
 let proc, log = ""
+const blockers = []
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function api(route, body) {
   const response = await fetch(base + route, { signal: AbortSignal.timeout(route === "/api/run" ? 120000 : 10000),
@@ -35,7 +47,7 @@ async function stop() {
     throw new Error("Server shutdown timed out; owned process tree was forcibly stopped")
   }
 }
-async function start(translated = false, defaultDemo = false) {
+async function start(translated = false, defaultDemo = false, { env: extraEnv = {}, failedHarness } = {}) {
   const config = JSON.parse(await readFile(path.join(root, "config", "settings.json"), "utf8"))
   config.projectPath = defaultDemo ? "examples/demo" : target
   config.codex = { useDefaultModel: !translated, model: translated ? "MiniMax-M3.1-Flash-Preview" : "gpt-6.1-sol" }
@@ -43,18 +55,32 @@ async function start(translated = false, defaultDemo = false) {
   await writeFile(configPath, JSON.stringify(config))
   const data = path.join(output, translated ? "translated" : "native")
   const env = { ...process.env, VIZ_CONFIG_PATH: configPath, VIZ_RUNTIME_DIR: data,
-    VIZ_PORT: "4597", OC_PORT: "45341", LLM_PORT: "45342" }
+    VIZ_PORT: String(vizPort), ...extraEnv }
+  for (const key of ["OC_PORT", "LLM_PORT"]) if (!(key in extraEnv)) delete env[key]
   delete env.VIZ_TARGET_PROJECT
   proc = spawn(process.execPath, [path.join(root, "src", "server.mjs")],
     { cwd: root, env, stdio: ["ignore", "pipe", "pipe", "ipc"] })
   proc.stdout.on("data", chunk => { log += chunk.toString() })
   proc.stderr.on("data", chunk => { log += chunk.toString() })
-  for (let n = 0; n < 225; n++) {
+  let observed = false
+  for (let n = 0; n < 1125; n++) {
     if (proc.exitCode !== null) throw new Error("Verification server exited before readiness; inspect server log")
-    try {
-      const status = await api("/api/status")
-      if (status.ocReady) { await delay(600); return status }
-    } catch {}
+    let status
+    try { status = await api("/api/status") } catch {}
+    if (status) {
+      if (!observed) {
+        (results.startupSnapshots ??= []).push(status)
+        observed = true
+        assert((await fetch(base + "/")).ok, "The webpage must be available while CLIs prepare")
+      }
+      if (failedHarness) {
+        const other = failedHarness === "codex" ? "opencode" : "codex"
+        if (status.cliStatus[failedHarness].phase === "error" && status.cliStatus[other].available) return status
+      } else {
+        for (const [h, state] of Object.entries(status.cliStatus)) if (state.phase === "error") throw new Error(`${h}: ${state.error}`)
+        if (status.ocReady && status.cliStatus.codex.available) { await delay(600); return status }
+      }
+    }
     await delay(400)
   }
   throw new Error("Verification server readiness timeout")
@@ -159,8 +185,33 @@ async function runArticleTask() {
   return { harness: "opencode", task: "unrolling-the-codex-agent-loop 介绍", capturedCalls: calls.length, previews }
 }
 try {
+  if (smokeOnly) {
+    // Reproduce the reported default-port conflict in the application itself.
+    // OpenCode --port 0 prefers 4096 before falling back to an OS-assigned port.
+    for (const port of [45322, 45321, 4096]) {
+      const blocker = createServer()
+      try {
+        await listenLocal(blocker, { port, fallback: false })
+        blockers.push(blocker)
+      } catch (err) {
+        if (!["EADDRINUSE", "EACCES"].includes(err.code)) throw err
+      }
+    }
+  }
   results.status = await start(false, smokeOnly)
   if (smokeOnly) {
+    for (const h of ["codex", "opencode"]) {
+      assert.equal(results.status.versions[h].replace(/^codex-cli\s+/, ""), sourceLock[h].version)
+      assert.equal(results.status.cliStatus[h].available, true)
+      assert.equal(results.status.cliStatus[h].directory, path.join(results.status.cliDirectory, h, sourceLock[h].version))
+    }
+    assert.equal(results.status.codexLauncher, path.join(results.status.cliDirectory, "codex", sourceLock.codex.version, "node_modules", "@openai", "codex", "bin", "codex.js"))
+    const ocConfig = JSON.parse(await readFile(path.join(output, "native", "opencode-home", "config", "opencode.json"), "utf8"))
+    assert.equal(ocConfig.autoupdate, false)
+    for (const port of [results.status.ports.llm, results.status.ports.opencode]) assert(![45322, 45321, 4096].includes(port))
+    assert.equal(ocConfig.provider.minimax.api, `http://127.0.0.1:${results.status.ports.llm}/anthropic/v1`)
+    assert(blockers.every(blocker => blocker.listening), "Existing listeners must remain untouched")
+    results.checks.push({ name: "Default internal port allocation survives occupied 45322/45321/4096; OpenCode uses the actual proxy address", passed: true })
     const template = await readFile(path.join(root, "examples", "demo", "README.md"), "utf8")
     assert.equal(await readFile(path.join(results.status.targetProject, "README.md"), "utf8"), template)
     assert.equal(results.status.targetProject, path.join(root, "examples", "demo"))
@@ -174,9 +225,44 @@ try {
     results.checks.push({ name: "Startup, default demo directory and single-model registry (no model requests)", passed: true })
     await stop()
     await delay(500)
-    const custom = await start()
+    const globalDir = path.join(output, "newer-global-cli")
+    await mkdir(globalDir)
+    for (const h of ["codex", "opencode"]) await writeFile(path.join(globalDir, h + (process.platform === "win32" ? ".cmd" : "")),
+      process.platform === "win32" ? `@echo ${h === "codex" ? "codex-cli " : ""}9.9.9\r\n` : `#!/bin/sh\necho '${h === "codex" ? "codex-cli " : ""}9.9.9'\n`, { mode: 0o755 })
+    const custom = await start(true, false, { env: {
+      LLM_PORT: "45322", OC_PORT: "45321",
+      PATH: globalDir + path.delimiter + (process.env.PATH ?? process.env.Path ?? ""),
+      CODEX_CLI_EXE: "nonexistent-global-newer-codex.exe", CODEX_CLI_JS: "nonexistent-global-newer-codex.js",
+    } })
     assert.equal(custom.targetProject, target)
-    results.checks.push({ name: "projectPath setting selects the requested directory", passed: true })
+    assert.equal(custom.codexLauncher, results.status.codexLauncher)
+    assert.equal(custom.cliStatus.opencode.executable, results.status.cliStatus.opencode.executable)
+    assert.notEqual(custom.ports.llm, 45322)
+    assert.notEqual(custom.ports.opencode, 45321)
+    const codexConfig = await readFile(path.join(output, "translated", "codex-home", "config.toml"), "utf8")
+    assert(codexConfig.includes(`base_url = "http://127.0.0.1:${custom.ports.llm}/v1"`), "Codex config must use the bound proxy port, not the requested port")
+    assert.equal(JSON.parse(await readFile(path.join(output, "translated", "opencode-home", "config", "opencode.json"), "utf8")).provider.minimax.api,
+      `http://127.0.0.1:${custom.ports.llm}/anthropic/v1`)
+    results.checks.push({ name: "projectPath, cache reuse, global CLI independence and occupied explicit port fallback with correct Codex/OpenCode config", passed: true })
+    await stop()
+    await delay(500)
+    // Keep a real, already-verified Codex cache; force OpenCode's fresh install
+    // to a closed localhost registry. This exercises failure without a model call.
+    const failureCache = path.join(output, "failure-cli")
+    await mkdir(path.join(failureCache, "codex"), { recursive: true })
+    await symlink(custom.cliStatus.codex.directory, path.join(failureCache, "codex", sourceLock.codex.version), process.platform === "win32" ? "junction" : "dir")
+    const failed = await start(false, false, { failedHarness: "opencode", env: {
+      VIZ_CLI_DIR: failureCache, npm_config_registry: "http://127.0.0.1:1", npm_config_fetch_retries: "0", npm_config_fetch_timeout: "2000",
+    } })
+    assert.equal(failed.cliStatus.codex.available, true)
+    assert.equal(failed.cliStatus.opencode.available, false)
+    assert((await fetch(base + "/")).ok)
+    const unavailable = await fetch(base + "/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ harness: "opencode", prompt: "must not execute" }) })
+    assert.equal(unavailable.status, 503)
+    assert.equal((await api("/api/llm-calls")).calls.length, 0)
+    assert.equal((await api("/api/last-run?harness=opencode")).events.length, 0)
+    results.failureStatus = failed
+    results.checks.push({ name: "Webpage survives a failed OpenCode install; Codex remains ready and unavailable tasks return 503", passed: true })
   } else {
   for (const [name, harness, filename, reject] of [
     ["native Codex context and file modification", "codex", "codex-proof.txt", false],
@@ -199,6 +285,7 @@ try {
   }
 } finally {
   await stop()
+  await Promise.all(blockers.map(blocker => new Promise(resolve => blocker.close(resolve))))
   await writeFile(path.join(output, "server.log"), log)
   await writeFile(path.join(output, "results.json"), JSON.stringify(results, null, 2))
   console.log(JSON.stringify({ output, checks: results.checks.map(({ name, passed, error, capturedCalls, permissionsReplied, sources }) => ({ name, passed, error, capturedCalls, permissionsReplied, sources })) }, null, 2))
