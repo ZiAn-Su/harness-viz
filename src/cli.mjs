@@ -57,7 +57,7 @@ async function validate(harness, directory, version, execPath, run, env, onProce
 
 // Serialize installers across server processes. Dead owners are recoverable;
 // an interrupted download never becomes a usable cache (publication is atomic).
-async function acquireLock(file, onState) {
+export async function acquireLock(file, onState = () => {}) {
   const deadline = Date.now() + INSTALL_TIMEOUT + 60_000
   for (;;) {
     try {

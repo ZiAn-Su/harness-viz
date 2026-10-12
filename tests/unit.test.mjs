@@ -43,6 +43,19 @@ test("diagram validation requires every declared multi-way branch", () => {
   assert.throws(() => validateFlowGraph(graph, flows.size), /decisions need all declared branches/)
 })
 
+test("mechanism routes must use existing diagram edges and cannot shortcut preparation into sampling", () => {
+  for (const h of ["opencode", "codex"]) for (const name of Object.keys(flows.graphs[h].mechanisms)) {
+    const route = flows.mechanismPath(h, name)
+    assert.equal(route.edges.length, route.nodes.length - 1)
+    assert(route.condition)
+  }
+  assert.deepEqual(Array.from(flows.mechanismPath("opencode", "entry").nodes), ["server", "loop", "decide", "subflow1", "subflow3", "llm"])
+  assert.deepEqual(Array.from(flows.mechanismPath("opencode", "textFinish").nodes), ["llm", "decide2", "exec", "outcome", "loop", "decide", "done"])
+  const graph = JSON.parse(JSON.stringify(flows.graphs.opencode))
+  graph.mechanisms.entry.nodes = ["server", "llm"]
+  assert.throws(() => validateFlowGraph(graph, flows.size), /mechanism must follow existing diagram edges/)
+})
+
 test("translator preserves function call/result identity but is explicitly lossy", () => {
   const result = translate({ model: "fixture", instructions: "base", reasoning: { effort: "high" }, parallel_tool_calls: false,
     input: [

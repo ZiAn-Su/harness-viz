@@ -84,7 +84,7 @@ function createFrontend(harness = "opencode") {
     for (const attr of match[0].matchAll(/\bdata-([\w-]+)="([^"]*)"/g)) element.dataset[attr[1]] = attr[2]
     elements.set(match[1], element)
   }
-  let calls = [], eventID = 0, timerID = 0
+  let calls = [], eventID = 0, timerID = 0, extensionResponse = null, runResponse = null
   const fetches = [], timers = new Map()
   const preferences = new Map()
   const context = vm.createContext({
@@ -107,6 +107,17 @@ function createFrontend(harness = "opencode") {
     },
     window: { matchMedia: () => ({ matches: false }), addEventListener() {}, removeEventListener() {} },
     async fetch(url, options) {
+      if (url === "/api/run") {
+        assert(runResponse, "task submission requires an explicit synthetic response")
+        fetches.push({ url, options })
+        return runResponse()
+      }
+      if (url === "/api/questions") return { ok: true, json: async () => ({ questions: [] }) }
+      if (url === "/api/extensions") {
+        assert(extensionResponse, "extension discovery requires an explicit synthetic response")
+        fetches.push({ url, options })
+        return extensionResponse()
+      }
       assert.equal(url, "/api/llm-calls", "no real API/network access in synthetic units")
       fetches.push({ url, options })
       const snapshot = structuredClone(calls)
@@ -127,6 +138,8 @@ function createFrontend(harness = "opencode") {
       return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
     },
     setCalls(value) { calls = structuredClone(value) },
+    setExtensionResponse(value) { extensionResponse = value },
+    setRunResponse(value) { runResponse = value },
     event(type, properties = {}, overrides = {}) {
       const id = ++eventID
       const event = {
@@ -151,6 +164,127 @@ function rawSections(markup) {
 
 test("frontend syntax compiles without execution", () => {
   assert.doesNotThrow(() => new vm.Script(source, { filename: "index.html" }))
+})
+
+test("synthetic: thinking strength follows each native model, hides unsupported toggles and preserves per-harness selection", () => {
+  const ui = createFrontend()
+  ui.evaluate("modelMenus.opencode=fixture; paintModelMenu()", { defaultModel: "fixture/k3", models: [
+    { value: "fixture/k3", variants: ["low", "high", "max"] },
+    { value: "fixture/other", variants: ["medium", "high"] }, { value: "fixture/plain" }, { value: "fixture/toggle", variants: ["none", "thinking"] },
+  ] })
+  const model = ui.elements.get("modelSel"), variant = ui.elements.get("effortSel"), control = ui.elements.get("effortControl")
+  assert.deepEqual(variant.children.map(option => option.value), ["", "low", "high", "max"])
+  assert.deepEqual(variant.children.map(option => option.textContent), ["默认", "低", "高", "最高"])
+  assert.equal(variant.value, "")
+  variant.value = "max"; variant.onchange()
+  model.value = "fixture/other"; model.onchange()
+  assert.equal(variant.value, "")
+  assert.deepEqual(variant.children.map(option => option.value), ["", "medium", "high"])
+  model.value = "fixture/plain"; model.onchange()
+  assert.equal(variant.disabled, true)
+  assert.equal(control.hidden, true)
+  assert.equal(variant.value, "")
+  model.value = "fixture/toggle"; model.onchange()
+  assert.equal(control.hidden, true, "An on/off thinking toggle is not an effort scale")
+  model.value = "fixture/k3"; model.onchange()
+  assert.equal(variant.value, "max")
+  ui.evaluate("modelMenus.codex={models:[{value:'fixture/k3',reasoningEfforts:['low','medium','high','xhigh']}],defaultModel:'fixture/k3'}; switchHarness('codex')")
+  assert.equal(control.hidden, false)
+  assert.equal(variant.disabled, false)
+  assert.equal(variant.value, "")
+  assert.deepEqual(variant.children.map(option => option.textContent), ["默认", "低", "中", "高", "超高"])
+  variant.value = "high"; variant.onchange()
+  ui.evaluate("switchHarness('opencode')")
+  assert.equal(control.hidden, false)
+  assert.equal(variant.value, "max")
+  ui.evaluate("switchHarness('codex')")
+  assert.equal(variant.value, "high")
+  ui.evaluate("switchHarness('opencode')")
+  ui.evaluate("modelMenus.opencode.models[0].variants=['low','high']; paintModelMenu()")
+  assert.equal(variant.value, "", "A removed native variant cannot remain selected")
+})
+
+test("synthetic: strength selection sends an OpenCode native variant or Codex reasoning effort, and default adds no override", async () => {
+  for (const [harness, variant] of [["opencode", "max"], ["opencode", ""], ["codex", "max"]]) {
+    const ui = createFrontend(harness)
+    ui.evaluate("statusSnapshot={ocReady:true,versions:{codex:'0.160.0'}}")
+    ui.elements.get("prompt").value = "local fixture"
+    ui.elements.get("modelSel").value = "fixture/k3"
+    ui.elements.get("effortSel").value = variant
+    ui.setRunResponse(async () => ({ ok: true, json: async () => ({ sessionID: "fixture-root" }) }))
+    await ui.evaluate("run()")
+    const body = JSON.parse(ui.fetches.find(f => f.url === "/api/run").options.body)
+    assert.deepEqual(body, { harness, prompt: "local fixture", model: "fixture/k3", ...(variant ? { [harness === "opencode" ? "variant" : "reasoningEffort"]: variant } : {}) })
+  }
+})
+
+test("synthetic: continue-current-conversation defaults off, appears after completion and sends only the current session ID without clearing evidence", async () => {
+  const ui = createFrontend()
+  ui.evaluate("statusSnapshot={ocReady:true}")
+  ui.event("viz.run", { prompt: "first", sessionID: "root", turnNumber: 1 })
+  ui.event("llm.request", { index: 1, sessionID: "root", tools: [] })
+  ui.event("session.status", { sessionID: "root", status: { type: "idle" } })
+  const control = ui.elements.get("continueControl"), checkbox = ui.elements.get("continueCheck")
+  assert.equal(control.hidden, false)
+  assert.equal(checkbox.checked, false)
+  checkbox.checked = true; checkbox.onchange()
+  ui.elements.get("prompt").value = "second"
+  ui.setRunResponse(async () => ({ ok: true, json: async () => ({ sessionID: "root", continuing: true }) }))
+  await ui.evaluate("run()")
+  assert.equal(JSON.parse(ui.fetches.find(f => f.url === "/api/run").options.body).continueSessionID, "root")
+  assert.equal(ui.read("store.llm.length"), 1)
+  assert.equal(ui.read("llmCallCount"), 1)
+  assert.equal(checkbox.disabled, true)
+  ui.event("viz.run", { prompt: "second", sessionID: "root", continuing: true, turnNumber: 2 })
+  ui.event("llm.request", { index: 2, sessionID: "root", tools: [] })
+  ui.event("session.status", { sessionID: "root", status: { type: "idle" } })
+  assert.equal(ui.read("runState"), "ended", "Second turn can finish after clearing the previous terminal marker")
+  assert.equal(ui.read("store.llm.length"), 2)
+  assert.equal(ui.read("execution.entries().filter(row=>row.kind==='start').length"), 2)
+  assert.equal(ui.elements.get("transcript").children.filter(e => e.className.includes("user")).length, 2)
+  assert.equal(checkbox.checked, true)
+})
+
+test("synthetic: continuation choices are independent per harness and rejected continuations preserve the completed conversation", async () => {
+  const ui = createFrontend()
+  ui.evaluate("statusSnapshot={ocReady:true,versions:{codex:'0.160.0'}}")
+  ui.event("viz.run", { sessionID: "root", turnNumber: 1 })
+  ui.event("llm.request", { index: 1, sessionID: "root", tools: [] })
+  ui.event("session.status", { sessionID: "root", status: { type: "idle" } })
+  const checkbox = ui.elements.get("continueCheck")
+  checkbox.checked = true; checkbox.onchange()
+  ui.evaluate("harness='codex'; updateContinueControl()")
+  assert.equal(checkbox.checked, false)
+  ui.evaluate("harness='opencode'; updateContinueControl()")
+  assert.equal(checkbox.checked, true)
+  ui.elements.get("prompt").value = "follow up"
+  ui.setRunResponse(async () => ({ ok: false, json: async () => ({ error: "stale conversation" }) }))
+  await ui.evaluate("run()")
+  assert.equal(ui.read("runState"), "ended")
+  assert.equal(ui.read("store.llm.length"), 1)
+  assert.equal(ui.read("currentSession"), "root")
+  checkbox.checked = false; checkbox.onchange()
+  ui.setRunResponse(async () => ({ ok: true, json: async () => ({ sessionID: "new-root" }) }))
+  await ui.evaluate("run()")
+  assert.equal(ui.read("llmCallCount"), 0)
+  assert.equal(JSON.parse(ui.fetches.filter(f => f.url === "/api/run").at(-1).options.body).continueSessionID, undefined)
+})
+
+test("synthetic: resumed Codex exec item IDs cannot overwrite earlier turns' answers or tool evidence", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run", { prompt: "first", sessionID: "thread", turnNumber: 1 })
+  ui.event("codex.item.completed", { item: { id: "item_0", type: "agent_message", text: "FIRST_ANSWER" } }, { conversationTurn: 1 })
+  ui.event("codex.item.completed", { item: { id: "item_1", type: "command_execution", command: "first", status: "completed" } }, { conversationTurn: 1 })
+  ui.event("codex.turn.completed")
+  ui.event("viz.run", { prompt: "second", sessionID: "thread", turnNumber: 2, continuing: true })
+  ui.event("codex.item.completed", { item: { id: "item_0", type: "agent_message", text: "SECOND_ANSWER" } }, { conversationTurn: 2 })
+  ui.event("codex.item.completed", { item: { id: "item_1", type: "command_execution", command: "second", status: "completed" } }, { conversationTurn: 2 })
+  ui.event("codex.turn.completed")
+  assert.equal(ui.read("codexItems.size"), 4)
+  assert.equal(ui.read("toolCards['cx-item_0'].dataset.rawText"), "FIRST_ANSWER")
+  assert.equal(ui.read("toolCards['cx-2:item_0'].dataset.rawText"), "SECOND_ANSWER")
+  assert.deepEqual(ui.read("store['c-tool'].map(r=>r.data.command)"), ["first", "second"])
+  assert.equal(ui.read("execution.entries().filter(row=>row.kind==='tool-completed').length"), 2)
 })
 
 test("synthetic: CLI preparation disables only its entry and status refresh preserves records/drafts", async () => {
@@ -838,4 +972,151 @@ test("synthetic: missing history in a captured request is unknown rather than an
   assert.match(rendered, /input: 未记录/)
   assert.match(rendered, /更早内容可能由前序响应继承/)
   assert.doesNotMatch(rendered, /input: 0 项/)
+})
+
+test("synthetic: a plain answer expands its full mechanism without adding fictional runtime events", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root", prompt: "question" })
+  ui.event("session.created", { info: { id: "root", title: "task" } })
+  ui.event("llm.request", { index: 17, sessionID: "root", messages: 1, tools: [] })
+  ui.event("llm.response", { index: 17, sessionID: "root", textChars: 30, toolCalls: [] })
+  ui.event("viz.prompt.returned", { sessionID: "root", result: { info: { finish: "stop" } } })
+  ui.event("session.status", { sessionID: "root", status: { type: "idle" } })
+  assert.equal(ui.read("execution.entries().length"), 6)
+  assert.deepEqual(ui.read("flowEntries().filter(r=>r.type==='mechanism').map(r=>r.phase.id)"),
+    ["loop", "decide", "subflow1", "subflow3", "decide2", "exec", "outcome", "loop", "decide"])
+  assert.equal(ui.read("execution.coverage().outcome"), undefined)
+  ui.evaluate("focusFlowEntry(2)")
+  assert.equal(ui.read("selectedNode"), "loop")
+  assert.equal(ui.read("mechanismFocus.node"), "loop")
+  assert.match(ui.elements.get("executionEvidenceNote").textContent, /没有原生时间戳/)
+  assert(ui.read("highlightedMechanism().edges.some(e=>e.from==='server'&&e.to==='loop')"))
+  assert.equal(ui.read("highlightedMechanism().edges.some(e=>e.from==='server'&&e.to==='llm')"), false)
+  ui.elements.get("executionMode").value = "events"
+  ui.evaluate("renderExecution()")
+  assert.equal(ui.read("flowEntries().length"), 6)
+  assert.deepEqual(ui.read("highlightedMechanism()"), { nodes: [], edges: [] })
+})
+
+test("synthetic: matching IDs establish response/tool/input links; names and global neighbors do not", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.event("session.created", { info: { id: "root" } })
+  ui.event("llm.request", { index: 1, sessionID: "root", tools: ["read"] })
+  ui.event("llm.response", { index: 1, sessionID: "root", toolCalls: ["read"] })
+  const part = { id: "part", callID: "read-1", sessionID: "root", type: "tool", tool: "read", state: { status: "running", input: {} } }
+  ui.event("message.part.updated", { part })
+  ui.event("message.part.updated", { part: { ...part, state: { ...part.state, status: "completed", output: "result" } } })
+  ui.event("llm.request", { index: 2, sessionID: "root", tools: [] })
+  const packets = [
+    { index: 1, sessionID: "root", request: { messages: [] }, response: { toolUses: [{ name: "read", callID: "read-1" }] } },
+    { index: 2, sessionID: "root", request: { messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "read-1", content: "result" }] }] } },
+  ]
+  ui.evaluate("for(const packet of fixture) relationshipPackets.set(packet.index,HarnessEvidence.packetLinks(packet))", packets)
+  const result = ui.read("HarnessEvidence.relation(execution.entries(),execution.entries().at(-1),relationshipPackets)")
+  assert.equal(result.source.callID, "read-1")
+  assert.equal(result.path.name, "repeat")
+  const dispatch = ui.read("HarnessEvidence.relation(execution.entries(),execution.entries().find(r=>r.kind==='tool-running'),relationshipPackets)")
+  assert.equal(dispatch.path.name, "dispatchTool")
+  ui.evaluate("relationshipPackets.set(1,HarnessEvidence.packetLinks({index:1,sessionID:'root',response:{toolUses:[{name:'read',callID:'different'}]}}))")
+  assert.equal(ui.read("HarnessEvidence.relation(execution.entries(),execution.entries().find(r=>r.kind==='tool-running'),relationshipPackets).path"), null)
+})
+
+test("synthetic: child model calls belong inside the child subprocess, not the parent sampling node", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.event("session.created", { info: { id: "child", parentID: "root" } })
+  ui.event("llm.request", { index: 2, sessionID: "child", tools: [] })
+  assert.equal(ui.read("execution.entries().find(r=>r.index===2).node"), "sub")
+  assert.equal(ui.read("store.sub.filter(r=>r.kind==='llm').length"), 1)
+  assert.equal(ui.read("store.llm ?? null"), null)
+  ui.evaluate("focusExecution(execution.entries().findIndex(r=>r.index===2))")
+  assert.deepEqual(ui.read("highlightedMechanism()"), { nodes: ["sub"], edges: [] })
+  assert.match(ui.elements.get("flowLevel").textContent, /子会话内部/)
+})
+
+test("synthetic: extension configuration is distinct from actual catalog/tools/skill-body evidence", () => {
+  const ui = createFrontend()
+  const inventory = { skills: [{ name: "frontend-design", revision: "fixed" }], mcp: [{ name: "context7", version: "4.3.0" }], plugins: [{ name: "dcp", version: "3.2.0" }] }
+  const context = { system: "Available skills: frontend-design", tools: [{ name: "context7_query_docs" }, { name: "compress" }], items: [
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "skill-call", content: '<skill_content name="frontend-design">body</skill_content>' }] },
+  ] }
+  const before = structuredClone(context)
+  const rendered = ui.evaluate("renderExtensionLayers(fixture.call, fixture.context)", { call: { extensions: inventory }, context })
+  assert.match(rendered, /配置快照不是使用证明/)
+  assert.match(rendered, /不单独证明文件已被读取/)
+  assert.match(rendered, /正文／参考资料/)
+  assert.match(rendered, /context7_query_docs/)
+  assert.match(rendered, /可见 compress/)
+  assert.match(rendered, /请求中存在技能内容标记/)
+  assert.deepEqual(context, before)
+  assert.match(ui.evaluate("renderExtensionLayers({},fixture)", context), /不用当前配置反推当时加载内容/)
+})
+
+test("synthetic: discovery survives status polls and never labels OpenCode results as Codex discovery", async () => {
+  const ui = createFrontend()
+  const status = { ocReady: true, extensions: { state: { phase: "ready" },
+    opencode: { profile: "synthetic", skills: [{ name: "frontend-design" }], mcp: [{ name: "context7" }], plugins: [{ name: "dcp" }] },
+    codex: { profile: "synthetic", skills: [{ name: "frontend-design" }], mcp: [{ name: "context7" }], plugins: [] } } }
+  const observed = { harness: "opencode", available: true, skills: [{ name: "frontend-design", description: "synthetic", location: "fixture/SKILL.md" }],
+    mcp: { context7: { status: "connected" } }, tools: [{ id: "compress" }] }
+  ui.setExtensionResponse(async () => ({ ok: true, json: async () => ({ ...status.extensions, observed }) }))
+  ui.evaluate("applyStatus(fixture)", status)
+  await ui.evaluate("document.getElementById('extensionCheckBtn').onclick()")
+  const info = () => JSON.parse(ui.elements.get("extensionInfo").textContent)
+  assert.deepEqual(info().discovery, observed)
+  ui.evaluate("applyStatus(fixture)", structuredClone(status))
+  assert.deepEqual(info().discovery, observed, "polling must preserve discovery for the same configuration")
+  ui.evaluate("harness='codex'; updateModelInfo()")
+  assert.equal(info().discovery, undefined)
+  await ui.evaluate("document.getElementById('extensionCheckBtn').onclick()")
+  assert.equal(info().discovery.harness, "codex")
+  assert.equal(info().discovery.command, "npm run extensions:check")
+  assert.equal(info().discovery.tools, undefined)
+  assert.equal(ui.fetches.length, 1, "Codex instructions must not query the OpenCode discovery endpoint")
+  ui.evaluate("harness='opencode'; updateModelInfo()")
+  assert.deepEqual(info().discovery, observed)
+  status.extensions.opencode.profile = "changed"
+  ui.evaluate("applyStatus(fixture)", status)
+  assert.equal(info().discovery, undefined, "changed configuration invalidates the old discovery result")
+})
+
+test("synthetic: late discovery failures cannot replace another harness's information", async () => {
+  const ui = createFrontend()
+  const status = { ocReady: true, extensions: { state: { phase: "ready" },
+    opencode: { profile: "synthetic", skills: [], mcp: [], plugins: [] },
+    codex: { profile: "synthetic", skills: [], mcp: [], plugins: [] } } }
+  let reject
+  ui.setExtensionResponse(() => new Promise((resolve, fail) => { reject = fail }))
+  ui.evaluate("applyStatus(fixture)", status)
+  const checking = ui.evaluate("document.getElementById('extensionCheckBtn').onclick()")
+  assert.equal(ui.elements.get("extensionCheckBtn").disabled, true)
+  ui.evaluate("harness='codex'; updateModelInfo()")
+  await ui.evaluate("document.getElementById('extensionCheckBtn').onclick()")
+  const before = ui.elements.get("extensionInfo").textContent
+  reject(new Error("synthetic discovery failure"))
+  await checking
+  assert.equal(ui.elements.get("extensionInfo").textContent, before)
+  assert.equal(ui.elements.get("extensionCheckBtn").disabled, false)
+  ui.evaluate("harness='opencode'; updateModelInfo()")
+  assert.match(JSON.parse(ui.elements.get("extensionInfo").textContent).discovery.error, /synthetic discovery failure/)
+})
+
+test("synthetic: question interaction is separate from permission and preserves single, multiple and custom answers", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const request = { id: "que-one", sessionID: "root", questions: [
+    { header: "single", question: "choose", options: [{ label: "A", description: "first" }, { label: "B", description: "second" }] },
+    { header: "multi", question: "choose many", multiple: true, custom: false, options: [{ label: "X", description: "x" }, { label: "Y", description: "y" }] },
+  ] }
+  ui.event("question.asked", request)
+  const custom = new Element(); custom.attached = true; ui.elements.set("question-custom-0", custom)
+  assert(ui.elements.get("questionModal").classList.contains("show"))
+  assert(!ui.elements.get("permModal").classList.contains("show"))
+  ui.evaluate("chooseQuestion(0,0,true); chooseQuestion(1,0,true); chooseQuestion(1,1,true)")
+  assert.deepEqual(ui.read("collectQuestionAnswers(activeQuestion,questionDrafts.get(activeQuestion.id))"), [["A"], ["X", "Y"]])
+  ui.evaluate("questionDrafts.get(activeQuestion.id)[0].custom='自己的答案'")
+  assert.deepEqual(ui.read("collectQuestionAnswers(activeQuestion,questionDrafts.get(activeQuestion.id))"), [["自己的答案"], ["X", "Y"]])
+  ui.event("question.replied", { requestID: "que-one", sessionID: "root", answers: [["A"], ["X", "Y"]] })
+  assert(!ui.elements.get("questionModal").classList.contains("show"))
 })

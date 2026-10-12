@@ -25,14 +25,14 @@ globalThis.HarnessFlows = (() => {
       node(id(context), codex ? "整理上下文" : "读取历史", "任务要求 · 已有结果", "process", 70, 200),
       node(id(budget), codex ? "需切换上下文?" : "容量不足?", "", "decision", codex ? 430 : 100, codex ? 200 : 376, 170),
       { ...node(id(compact), "执行压缩", "模型摘要 / 上下文调整", "process", 400, codex ? 288 : 376), ...(codex ? { exceptions: ["压缩失败 / 中断"] } : {}) },
-      { ...node(id("llm"), "调用模型", "装配输入 · 生成输出", "process", 70, modelY), exceptions: ["终止异常"] },
+      { ...node(id("llm"), "调用模型", "装配输入 · 流式处理", "process", 70, modelY), exceptions: ["终止异常"] },
       node(id("decide2"), "需客户端派发?", "", "decision", 100, toolY, 170),
       { ...node(id("delegate"), "子任务工具?", "按处理器类别归并", "decision", 430, toolY, 170), evidence: "grouped" },
       node(id("sub"), "管理子任务", "能力取决于版本与配置", "subprocess", 400, childY, 230, id("sandbox")),
       node(id("tool"), "执行工具", "读写文件 · 命令 · 外部服务", "process", 400, regularY, 230, id("sandbox")),
       { ...node(id(feedback), "汇总反馈", "信息在输出 / 执行时记录", "process", 70, feedbackY), evidence: "grouped" },
       node(id("decide"), codex ? "还需处理?" : "请求已完成?", "", "decision", codex ? 100 : 430, codex ? followY : 200, 170),
-      node(id("done"), codex ? "本轮返回" : "会话转空闲", codex ? "上层仍可续行或完成" : "保留完成 / 失败 / 中断状态", "terminal", 250, 994, 200, null),
+      node(id("done"), codex ? "本轮返回" : "本次处理退出", codex ? "上层仍可续行或完成" : "保留结果 · 运行器转空闲", "terminal", 250, 994, 200, null),
       { ...node(id("sandbox"), "环境与权限", "检查发生在各自处理器内", "environment", 366, childY - 34, 300), height: 218 },
     ]
     if (codex) nodes.push(
@@ -96,9 +96,36 @@ globalThis.HarnessFlows = (() => {
         edge("outcome", "done", "M185,960 L185,978 L350,978 L350,994", "结束", 236, 973),
       )
     }
+    const mechanism = (ids, condition) => ({ nodes: ids.map(id), condition })
+    // Source-confirmed mechanism templates. They are not runtime trace records;
+    // every consecutive pair must reuse an existing edge in this same graph.
+    const mechanisms = codex ? {
+      entry: mechanism(["server", "context", "llm"], "本轮启动检查通过后，组织上下文并采样。"),
+      repeat: mechanism(["feedback", "decide", "budget", "context", "llm"], "还需处理且不切换上下文，重新组织输入。"),
+      taskRepeat: mechanism(["sub", "feedback", "decide", "budget", "context", "llm"], "子任务管理结果还需处理且不切换上下文。"),
+      dispatchTool: mechanism(["llm", "decide2", "delegate", "tool"], "输出包含客户端普通工具调用；分类按处理器职责归并。"),
+      dispatchTask: mechanism(["llm", "decide2", "delegate", "sub"], "输出包含客户端子任务管理调用；分类按处理器职责归并。"),
+      toolResult: mechanism(["tool", "feedback"], "普通工具返回的结果或错误被记录。"),
+      taskResult: mechanism(["sub", "feedback"], "子任务管理结果被记录；管理返回未必等于子任务完成。"),
+      textFinish: mechanism(["llm", "decide2", "feedback", "decide", "stop", "finalize", "done"], "无客户端工具、无需跟进且正常收尾；不代表本次已观测到各项判断或 hook。"),
+      compactContinue: mechanism(["compact", "compact-next", "context", "llm"], "维护完成后启动检查不阻断，重新组织上下文。"),
+    } : {
+      entry: mechanism(["server", "loop", "decide", "subflow1", "subflow3", "llm"], "请求未完成、无待办且未要求主动压缩时的常规入口。"),
+      repeat: mechanism(["exec", "outcome", "loop", "decide", "subflow1", "subflow3", "llm"], "本轮继续、请求仍未完成、无待办且无需主动压缩。"),
+      taskRepeat: mechanism(["sub", "exec", "outcome", "loop", "decide", "subflow1", "subflow3", "llm"], "子任务结果写回后，本轮继续并重新准备父会话输入。"),
+      dispatchTool: mechanism(["llm", "decide2", "delegate", "tool"], "模型流中产生客户端普通工具调用；工具可在响应流结束前执行。"),
+      dispatchTask: mechanism(["llm", "decide2", "delegate", "sub"], "模型流中产生 task 调用；不是循环头指定子任务的入口。"),
+      toolResult: mechanism(["tool", "exec"], "普通工具结果或错误写回会话。"),
+      taskResult: mechanism(["sub", "exec"], "task 的管理结果写回父会话。"),
+      textFinish: mechanism(["llm", "decide2", "exec", "outcome", "loop", "decide", "done"], "普通文字响应无新工具、无阻断/错误/压缩时先 continue；下一轮入口确认完成才退出。"),
+      compactQueued: mechanism(["schedule", "loop", "decide", "subflow1", "subflow2"], "安排标记后下一轮仍未完成，并取到压缩待办时才执行摘要。"),
+      compactContinue: mechanism(["subflow2", "compact-result", "loop", "decide", "subflow1", "subflow3", "llm"], "压缩允许继续后，重新准备；后续入口和容量条件仍需满足。"),
+      compactStop: mechanism(["subflow2", "compact-result", "done"], "压缩处理返回 stop 时退出。"),
+      specifiedTask: mechanism(["subflow1", "pre-sub", "loop"], "取到指定子任务后执行并直接回到循环头，跳过本轮父模型。"),
+    }
     graphs[harness] = {
       name: harness === "opencode" ? "OpenCode" : "Codex",
-      nodes, edges,
+      nodes, edges, mechanisms,
       regions: [{ id: "main-loop", title: codex ? "本轮处理的主循环" : "会话处理的主循环", x: 14, y: 178, width: 682, height: 802, parent: null }],
     }
   }
@@ -107,6 +134,14 @@ globalThis.HarnessFlows = (() => {
   const segmentsOf = path => {
     const points = pointsOf(path)
     return points.slice(1).map((b, i) => [points[i], b])
+  }
+  function mechanismPath(harness, name) {
+    const graph = graphs[harness], route = graph?.mechanisms[name]
+    if (!route) return null
+    const links = route.nodes.slice(1).map((to, n) => graph.edges.find(e => e.from === route.nodes[n] && e.to === to))
+    if (links.some(e => !e)) throw new Error(`Invalid mechanism path: ${harness}/${name}`)
+    return { name, condition: route.condition, nodes: [...route.nodes], edges: links,
+      steps: route.nodes.map((node, n) => ({ id: node, title: graph.nodes.find(item => item.id === node).title, branch: links[n]?.label ?? "" })) }
   }
   // A gap at a strict crossing means the wires are not connected. Shared
   // endpoints and collinear result-merge segments are left intact.
@@ -147,5 +182,5 @@ globalThis.HarnessFlows = (() => {
     }).join("")
     return `<svg class="flowsvg" viewBox="0 0 ${size.width} ${size.height}" aria-label="${graph.name} 智能体机制图"><defs>${markers}</defs>${regionHTML(graph.regions[0])}${area}${wires}${labels}</svg>${boxes}`
   }
-  return { size, graphs, render }
+  return { size, graphs, render, mechanismPath }
 })()

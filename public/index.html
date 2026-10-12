@@ -46,6 +46,11 @@
   }
   #prompt:focus { outline: none; border-color: var(--accent); }
   select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; font-size: 12px; max-width: 220px; }
+  #effortControl { display: flex; align-items: center; gap: 6px; }
+  #effortControl span { font-size: 12px; color: var(--dim); white-space: nowrap; }
+  #effortSel { min-width: 78px; }
+  #continueControl { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; color: var(--dim); }
+  #continueCheck { accent-color: var(--accent); }
   button { background: var(--accent); color: #0d1117; border: none; border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background .15s, color .15s; }
   button:hover { filter: brightness(1.1); }
   button:disabled { opacity: .4; cursor: not-allowed; }
@@ -160,7 +165,7 @@
   .readable-note { color: var(--dim); font-size: 12px; line-height: 1.7; padding: 8px 0; }
   .history-summary { padding-left: 22px; font-size: 12px; line-height: 1.8; }
   .history-summary li { padding: 5px 0; overflow-wrap: anywhere; }
-  .model-output { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+  .model-output, .extension-layers { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; }
   .output-tool { border-left: 3px solid var(--purple); padding: 8px 10px; background: var(--bg); margin: 8px 0; border-radius: 5px; }
   .msg { margin-bottom: 20px; max-width: 100%; }
   .msg .who { font-size: 11px; color: var(--dim); margin-bottom: 3px; }
@@ -282,6 +287,17 @@
   #permModal pre { background: var(--bg); border-radius: 6px; padding: 8px; font-size: 11px; color: var(--dim); max-height: 160px; overflow: auto; margin: 8px 0; }
   #permModal .actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; }
   #permModal .actions button { padding: 8px 16px; font-size: 13px; }
+  #questionModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:110; }
+  #questionModal.show { display:flex; }
+  #questionModal .card { width:600px; max-width:92vw; max-height:85vh; overflow:auto; padding:24px; background:var(--panel); border:1px solid var(--accent); border-radius:12px; }
+  #questionModal h3 { font-size:16px; margin-bottom:12px; }
+  #questionModal fieldset { border:1px solid var(--border); border-radius:8px; padding:12px; margin:12px 0; min-width:0; }
+  #questionModal legend { color:var(--accent); padding:0 6px; }
+  #questionModal label { display:flex; gap:10px; padding:8px 0; align-items:flex-start; font-size:13px; }
+  #questionModal small { display:block; color:var(--dim); margin-top:3px; }
+  #questionModal input[type=text] { width:100%; margin-top:8px; padding:8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; }
+  #questionModal .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
+  .api-json-controls { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:8px 0; }
   .evidence { color: var(--cyan); font-size: 10px; }
   .doc a { color: var(--accent); overflow-wrap: anywhere; }
   details.raw { margin: 6px 0; font-size: 11px; }
@@ -356,8 +372,11 @@
     main { flex-direction: column; padding: 8px; gap: 8px; }
     #colFlow, #colTx, #colLlm { flex: 1 1 0%; width: 100%; }
     .resizer { display: none !important; }
-    #composer { padding: 7px 10px; gap: 6px; }
-    #composer #modelSel, #codexModelBadge { display: none !important; }
+    #composer { padding: 7px 10px; gap: 6px; flex-wrap: wrap; }
+    #composer #modelSel, #composer #effortControl { flex: 1 1 calc(50% - 3px); max-width: 100%; min-width: 0; }
+    #composer #prompt { flex: 1 1 calc(100% - 140px); }
+    #composer #continueControl { flex-basis: 100%; }
+    #codexModelBadge { display: none !important; }
     #prompt { font-size: 13px; }
     #composer button { padding: 7px 9px; font-size: 12px; }
     #transcript { padding: 14px; }
@@ -366,6 +385,17 @@
   .cnt::after { content: "观测"; margin-left: 2px; font-weight: 400; }
   #cnt-llm::after, #cnt-c-llm::after { content: "请求"; }
   #cnt-loop::after { content: "消息"; }
+  .flowsvg .flow-edge.mechanism-route { stroke: var(--purple); stroke-width: 3; stroke-dasharray: 5 4; }
+  .fnode.mechanism-node { border-color: var(--purple); background: #b8a2ed13; }
+  .fdia.mechanism-node .shape { background: var(--purple); }
+  .fnode.selected.mechanism-focus { box-shadow: 0 0 0 3px var(--purple); }
+  .fdia.selected.mechanism-focus { filter: drop-shadow(0 0 6px var(--purple)); }
+  .mechanism-step { border-left-color: var(--purple); background: #b8a2ed0a; margin-left: 12px; width: calc(100% - 12px); }
+  .mechanism-step .step-meta { color: var(--purple); }
+  .execution-relation { border-left: 2px solid var(--purple); padding: 8px 10px; margin: 4px 0 8px 12px; color: var(--dim); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+  .execution-relation b { color: var(--purple); }
+  .execution-relation .route-note { display: block; margin-top: 4px; }
+  .flow-level { font-size: 10px; font-weight: 400; color: var(--purple); max-width: 170px; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -397,23 +427,27 @@
         <div id="verBadge" class="badge mono"></div>
         <details class="raw"><summary>源码版本</summary><pre id="sourceInfo"></pre></details>
         <details class="raw"><summary>专用 CLI</summary><pre id="cliInfo"></pre></details>
+        <details class="raw"><summary>原生模型配置来源</summary><pre id="nativeModelInfo"></pre></details>
+        <details class="raw"><summary>提示词扩展 · Skills / MCP / 插件</summary><p id="extensionSummary">服务尚未提供扩展配置快照</p><button id="extensionCheckBtn" class="mini">核对 CLI 发现结果</button><pre id="extensionInfo"></pre></details>
       </div>
     </details>
   </header>
 
   <div id="composer" hidden>
-    <select id="modelSel" title="模型（opencode 可选）"></select>
+    <select id="modelSel" title="原生配置中已发现的模型"></select>
+    <label id="effortControl" hidden><span>思考强度</span><select id="effortSel" aria-label="思考强度" disabled><option value="">默认</option></select></label>
     <span id="codexModelBadge" class="badge mono" style="display:none" title="当前模型"></span>
     <textarea id="prompt" rows="1" wrap="off" placeholder="输入任务，Enter 运行" aria-label="任务提示词"></textarea>
     <button class="ghost" id="demoBtn">演示</button>
     <button id="runBtn" disabled>准备中…</button>
+    <label id="continueControl" hidden><input id="continueCheck" type="checkbox">继续当前对话</label>
   </div>
 
   <main>
     <div id="colFlow" class="workspace-panel">
-      <div class="colhead"><span>流程图</span><div class="flow-actions"><button id="flowZoomOut" title="缩小">−</button><button id="flowZoomIn" title="放大">＋</button><button id="flowReset" title="适配面板">适配</button></div></div>
+      <div class="colhead"><span>流程图</span><span id="flowLevel" class="flow-level">主会话机制</span><div class="flow-actions"><button id="flowZoomOut" title="缩小">−</button><button id="flowZoomIn" title="放大">＋</button><button id="flowReset" title="适配面板">适配</button></div></div>
       <div class="flow-legend" aria-label="流程图图例"><span><i class="legend-terminal"></i>入口 / 返回</span><span><i class="legend-process"></i>处理</span><span><i class="legend-decision"></i>二向 / 多向结果</span><span><i class="legend-subprocess"></i>子流程</span><span><i class="legend-loop"></i>主循环</span><span><i class="legend-env"></i>环境与权限</span><span><i class="legend-exit"></i>终止异常</span></div>
-      <p class="flow-hint">青色保留证据，橙框定位记录，绿色仅为事件闪烁。未标记不等于未执行；连线是机制路线，判断未逐步跟踪。</p>
+      <p class="flow-hint">青色为采集证据，橙框为当前事件；紫色节点／虚线是源码机制说明，不是逐判断实测。子会话位于“管理子任务”内部。</p>
       <div id="flowWrap"><div id="flowCanvas">
         <div id="flowOpencode">
         </div>
@@ -426,11 +460,11 @@
     <div class="resizer" id="rz1"></div>
 
     <div id="colTx" class="workspace-panel">
-      <div class="colhead"><span>运行过程</span><div class="process-tabs"><button id="executionTab" class="on">执行顺序</button><button id="transcriptTab">转写</button></div></div>
+      <div class="colhead"><span>运行过程</span><div class="process-tabs"><button id="executionTab" class="on">调用全流程</button><button id="transcriptTab">转写</button></div></div>
       <div id="executionView">
-        <p class="execution-note">按观察器接收时间排列关键记录，区分主／子会话。模型响应可含工具调用；工具执行单独记录。编号不是内部循环次数，流式输出与工具执行可能重叠。</p>
-        <div class="execution-controls"><select id="executionScope" aria-label="筛选会话"><option value="all">全部会话</option><option value="parent">主会话</option><option value="child">子会话</option></select><button id="previousStep" class="ghost">上一条</button><button id="nextStep" class="ghost">下一条</button><span id="executionCount">0 条关键记录</span></div>
-        <details id="executionEvidence" class="raw execution-note" hidden><summary>所选时刻的原始事件</summary><p>此处保留该时刻的证据；右侧节点记录可能已更新为最新状态。</p><pre id="executionEvent"></pre></details>
+        <p class="execution-note">完整流程在实际事件之间展开紫色源码阶段，并沿图中已有连线解释调用机制；紫色阶段没有采集时间，不计作原生事件。编号／调用 ID 关联请求与结果，时间相邻不代表直接调用。</p>
+        <div class="execution-controls"><select id="executionMode" aria-label="流程展示模式"><option value="full">完整流程</option><option value="events">仅采集事件</option></select><select id="executionScope" aria-label="筛选会话"><option value="all">全部会话</option><option value="parent">主会话</option><option value="child">子会话</option></select><button id="previousStep" class="ghost">上一阶段</button><button id="nextStep" class="ghost">下一阶段</button><span id="executionCount">0 条关键记录</span></div>
+        <details id="executionEvidence" class="raw execution-note" hidden><summary id="executionEvidenceSummary">所选时刻的原始事件</summary><p id="executionEvidenceNote">此处保留该时刻的证据；右侧节点记录可能已更新为最新状态。</p><pre id="executionEvent"></pre></details>
         <details id="nodeCoverage"><summary>哪些节点有记录？</summary><ul id="coverageList"></ul></details>
         <div id="executionList"><div class="empty">运行后在这里查看顺序，点击记录定位流程图与详情。</div></div>
       </div>
@@ -465,6 +499,13 @@
     </div>
   </div>
 
+  <div id="questionModal" role="dialog" aria-modal="true" aria-labelledby="questionTitle">
+    <div class="card"><h3 id="questionTitle">助手需要你的选择</h3><div id="questionBody"></div>
+      <p id="questionError" class="readable-note"></p><div class="actions">
+        <button id="questionReject" class="ghost">跳过问题</button><button id="questionSubmit">提交答案</button>
+      </div></div>
+  </div>
+
 <script src="/vendor/marked.js"></script>
 <script src="/vendor/purify.js"></script>
 <script src="/markdown.js"></script>
@@ -478,6 +519,8 @@ const HarnessEvidence = (() => {
     const blocks = Array.isArray(item.content) ? item.content : []
     const calls = blocks.filter(b => b.type === "tool_use"), results = blocks.filter(b => b.type === "tool_result")
     if (calls.length) return { title: "模型提出工具调用", detail: calls.map(b => b.name).join("、") }
+    if (item.tool_calls?.length) return { title: "模型提出工具调用", detail: item.tool_calls.map(t => t.function?.name ?? t.type).join("、") }
+    if (item.role === "tool") return { title: "工具结果回传", detail: toolNames[item.tool_call_id] ?? item.tool_call_id ?? "" }
     if (results.length) return { title: blocks.some(b => b.type === "text") ? "用户内容与工具结果" : "工具结果回传",
       detail: results.map(b => toolNames[b.tool_use_id] ?? b.tool_use_id ?? "未提供调用标识").join("、") }
     if (["function_call", "custom_tool_call", "tool_search_call"].includes(item.type)) return { title: "模型提出工具调用", detail: item.name ?? item.type }
@@ -492,12 +535,13 @@ const HarnessEvidence = (() => {
     const names = Object.create(null)
     for (const item of items) {
       if (item.call_id && item.name) names[item.call_id] = item.name
+      for (const tool of item.tool_calls ?? []) if (tool.id) names[tool.id] = tool.function?.name
       for (const b of Array.isArray(item.content) ? item.content : []) if (b.type === "tool_use" && b.id) names[b.id] = b.name
     }
     return items.map(item => describeMessage(item, names))
   }
   function createTimeline() {
-    const rows = [], keys = new Set(), nativeNodes = new Map(), idlePhases = new Map(), lastStatus = new Map()
+    const rows = [], keys = new Set(), nativeNodes = new Map(), idlePhases = new Map(), lastStatus = new Map(), lastAssistant = new Map()
     function add(evt, row, identity) {
       const key = identity ?? `${evt.source}:${evt.id ?? rows.length}:${row.kind}`
       if (keys.has(key)) return false
@@ -508,21 +552,26 @@ const HarnessEvidence = (() => {
     function feed(evt, { child = false, scope = "主会话" } = {}) {
       const p = evt.properties ?? {}, cx = evt.harness === "codex", id = name => cx ? "c-" + name : name
       const session = p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID ?? p.info?.id ?? p.thread_id ?? p.event?.payload?.thread_id ?? null
+      if (evt.type === "message.updated" && p.info?.role === "assistant") {
+        const previous = lastAssistant.get(session)
+        if (!previous || (p.info.time?.created ?? 0) >= (previous.time?.created ?? 0)) lastAssistant.set(session, p.info)
+      }
       if (evt.type === "session.status" && p.status?.type === "busy") {
         if (lastStatus.get(session) === "idle") idlePhases.set(session, (idlePhases.get(session) ?? 0) + 1)
         lastStatus.set(session, "busy")
       }
       const common = { scope, child, sessionID: session }
       const row = (kind, node, title, detail = "", extra = {}) => ({ ...common, kind, node, title, detail, evidence: "direct", ...extra })
-      if (evt.type === "viz.run") return add(evt, row("start", id("ui"), "提交任务", short(p.prompt)))
-      if (evt.type === "llm.request") return add(evt, row("model-request", id("llm"), `发出模型请求 #${p.index}`,
+      if (evt.type === "viz.run") return add(evt, row("start", id("ui"), p.continuing ? `继续对话 · 第 ${p.turnNumber ?? "?"} 轮` : "提交任务", short(p.prompt)))
+      if (evt.type === "llm.request") return add(evt, row("model-request", child && !cx ? "sub" : id("llm"), `发出模型请求 #${p.index}`,
         `本次输入 ${p.messages ?? "未知"} 项；${Array.isArray(p.tools) ? "可用工具 " + p.tools.length + " 个" : "工具定义未提供"}`,
-        { index: p.index, evidence: "boundary", contextNode: cx ? "c-context" : child ? "sub" : "loop" }), `request:${p.index}`)
-      if (evt.type === "llm.response") return add(evt, row("model-response", id("llm"), `收到模型响应 #${p.index}`,
+        { index: p.index, evidence: "boundary", innerNode: child && !cx ? "llm" : null, contextNode: cx ? "c-context" : child ? "sub" : "loop", parentSessionID: p.parentSessionID ?? null }), `request:${p.index}`)
+      if (evt.type === "llm.response") return add(evt, row("model-response", child && !cx ? "sub" : id("llm"), `收到模型响应 #${p.index}`,
         p.error ? "捕获错误：" + short(typeof p.error === "string" ? p.error : JSON.stringify(p.error))
           : `文字 ${p.textChars ?? "未知"} 字符；${Array.isArray(p.toolCalls) ? "提出工具调用 " + p.toolCalls.length + " 个" + (p.toolCalls.length ? "（" + p.toolCalls.map(name => short(name, 40)).join("、") + "）" : "") : "工具项未提供"}`,
-        { index: p.index, evidence: "boundary" }), `response:${p.index}`)
-      if (evt.type === "session.created") return add(evt, row("session", child ? "sub" : "server", child ? "创建子会话" : "创建主会话", short(p.info?.title)), `session:${p.info?.id}`)
+        { index: p.index, evidence: "boundary", innerNode: child && !cx ? "llm" : null, toolCalls: Array.isArray(p.toolCalls) ? [...p.toolCalls] : null, error: p.error ?? null }), `response:${p.index}`)
+      if (evt.type === "session.created") return add(evt, row("session", child ? "sub" : "server", child ? "创建子会话" : "创建主会话", short(p.info?.title),
+        { innerNode: child ? "server" : null }), `session:${p.info?.id}`)
       if (evt.type === "message.part.updated") {
         const part = p.part
         if (part?.type === "tool") {
@@ -530,7 +579,8 @@ const HarnessEvidence = (() => {
           const title = { pending: "工具调用待执行", running: "工具开始执行", completed: "工具结果返回", error: "工具调用失败" }[status] ?? "工具状态记录"
           const node = child || part.tool === "task" ? "sub" : ["completed", "error"].includes(status) ? "exec" : "tool"
           return add(evt, row("tool-" + status, node, `${title}：${part.tool}`, toolHint(state.input),
-            { callID, tool: part.tool, status, relatedNode: part.tool !== "task" && (child || ["completed", "error"].includes(status)) ? "tool" : null }), `tool:${session}:${callID}:${status}`)
+            { callID, tool: part.tool, status, innerNode: child ? ["completed", "error"].includes(status) ? "exec" : "tool" : null,
+              relatedNode: part.tool !== "task" && (child || ["completed", "error"].includes(status)) ? "tool" : null }), `tool:${session}:${callID}:${status}`)
         }
         if (["compaction", "subtask"].includes(part?.type)) return add(evt, row("marker", child ? "sub" : part.type === "compaction" ? "schedule" : "subflow1",
           part.type === "compaction" ? "记录压缩待办标记" : "记录指定子任务标记", "标记存在，不表示待办已经执行"), `marker:${part.id}`)
@@ -538,13 +588,18 @@ const HarnessEvidence = (() => {
       if (evt.type === "session.compacted") return add(evt, row("compact", child ? "sub" : "subflow2", "报告历史压缩完成", "未记录内部继续／停止判断"))
       if (evt.type === "permission.asked" || evt.type === "permission.replied") return add(evt, row("permission", "sandbox",
         evt.type === "permission.asked" ? "等待权限确认" : "收到权限答复", p.permission ?? p.reply ?? ""))
+      if (evt.type.startsWith("question.")) return add(evt, row("question", child ? "sub" : "tool",
+        { "question.asked": "工具向用户提问", "question.replied": "用户答复问题", "question.rejected": "用户跳过问题" }[evt.type] ?? "问题事件",
+        p.questions?.map(q => q.header).join("、") ?? p.requestID ?? ""))
       if (evt.type === "session.idle" || evt.type === "session.status" && p.status?.type === "idle") {
         lastStatus.set(session, "idle")
-        return add(evt, row("idle", child ? "sub" : "done", child ? "子会话转为空闲" : "主会话转为空闲", "结束状态需结合回答与错误；没有逐分支退出记录"), `idle:${session}:${idlePhases.get(session) ?? 0}`)
+        return add(evt, row("idle", child ? "sub" : "done", child ? "子会话转为空闲" : "主会话转为空闲", "结束状态需结合回答与错误；没有逐分支退出记录",
+          { innerNode: child ? "done" : null, finish: lastAssistant.get(session)?.finish, error: lastAssistant.get(session)?.error ?? null }), `idle:${session}:${idlePhases.get(session) ?? 0}`)
       }
       if (evt.type === "session.status" && p.status?.type === "retry") return add(evt, row("retry", child ? "sub" : "llm", "模型调用重试", short(p.status.message)))
       if (evt.type === "session.error") return add(evt, row("error", child ? "sub" : "done", "记录会话错误", short(p.error?.message ?? p.error?.data?.message ?? "")))
-      if (evt.type === "viz.prompt.returned") return add(evt, row("returned", "done", "任务处理返回", p.result?.info?.error ? "返回包含错误" : "已返回助手结果；不等于事实或代码正确性验证"))
+      if (evt.type === "viz.prompt.returned") return add(evt, row("returned", "done", "任务处理返回", p.result?.info?.error ? "返回包含错误" : "已返回助手结果；不等于事实或代码正确性验证",
+        { finish: p.result?.info?.finish, error: p.result?.info?.error ?? null }))
       if (evt.type === "viz.abort.accepted") return add(evt, row("abort", id("done"), "中断请求已接受", "实际停止以进程／会话事件为准"))
       if (evt.type === "codex.proc.start" || evt.type === "codex.thread.started" || evt.type === "codex.turn.started") return add(evt,
         row("lifecycle", "c-server", { "codex.proc.start": "启动 Codex 进程", "codex.thread.started": "创建 Codex 线程", "codex.turn.started": "开始处理任务" }[evt.type]))
@@ -555,7 +610,7 @@ const HarnessEvidence = (() => {
         if (!item || !["command_execution", "file_change", "mcp_tool_call", "collab_tool_call", "web_search"].includes(item.type)) return false
         const done = evt.type === "codex.item.completed", node = item.type === "collab_tool_call" ? "c-sub" : "c-tool"
         return add(evt, row(done ? "tool-completed" : "tool-running", node, `${done ? "活动结果返回" : "活动开始"}：${item.tool ?? item.type}`,
-          short(item.command ?? item.query ?? item.status), { callID: item.call_id ?? item.id }), `item:${item.id}:${done}`)
+          short(item.command ?? item.query ?? item.status), { callID: item.call_id ?? item.id }), `item:${evt.conversationTurn ?? 1}:${item.id}:${done}`)
       }
       if (evt.type === "codex.trace") {
         const raw = p.event?.payload ?? {}, kind = raw.kind?.type ?? raw.kind, callID = raw.tool_call_id
@@ -586,13 +641,94 @@ const HarnessEvidence = (() => {
       for (const r of rows) {
         mark(r.node, r.evidence === "boundary" ? "模型请求／响应捕获" : "直接活动记录", r.scope)
         mark(r.contextNode, "发给模型的输入可见；内部读取未跟踪", r.scope)
-        mark(r.relatedNode, r.child ? "子会话工具执行记录" : "工具结果／错误记录", r.scope)
+        if (!r.child) mark(r.relatedNode, "工具结果／错误记录", r.scope)
       }
       return result
     }
-    return { feed, entries, coverage, clear() { rows.length = 0; keys.clear(); nativeNodes.clear(); idlePhases.clear(); lastStatus.clear() } }
+    return { feed, entries, coverage, clear() { rows.length = 0; keys.clear(); nativeNodes.clear(); idlePhases.clear(); lastStatus.clear(); lastAssistant.clear() } }
   }
-  return { short, toolHint, describeMessage, inputSummary, createTimeline }
+  function packetLinks(c) {
+    const request = c.anthropicRequest ?? c.request?.request ?? c.request ?? {}
+    const items = request.messages ?? request.input ?? []
+    const results = Array.isArray(items) ? items.flatMap(item => [
+      ...(item.role === "tool" && item.tool_call_id ? [item.tool_call_id] : []),
+      ...(["function_call_output", "custom_tool_call_output"].includes(item.type) ? [item.call_id] : []),
+      ...(Array.isArray(item.content) ? item.content.filter(block => block.type === "tool_result").map(block => block.tool_use_id) : []),
+    ]).filter(Boolean) : []
+    return { index: c.index, sessionID: c.sessionID ?? null, results, proposals: c.response?.toolUses ?? [] }
+  }
+  function relation(rows, target, packets = new Map()) {
+    const h = target.event.harness ?? "opencode", cx = h === "codex"
+    const same = row => !!target.sessionID && row.sessionID === target.sessionID
+    const at = rows.indexOf(target), before = rows.slice(0, at)
+    const base = { type: "unlinked", title: "未建立调用关系", note: "不根据全局时间相邻或工具名称猜测调用关系。", path: null, source: null, nested: target.child }
+    const mechanism = (name, title, note, source = null) => ({ ...base, type: "mechanism", title, note,
+      path: HarnessFlows.mechanismPath(h, name), source })
+    const linked = (title, note, source) => ({ ...base, type: "linked", title, note, source })
+    if (target.scope.startsWith("未关联")) return { ...base, note: "会话归属未确认，不能串到主会话的调用链。" }
+    if (target.kind === "session" && !target.child) {
+      const start = before.findLast(row => row.kind === "start" && same(row))
+      return start ? { ...linked("提交任务 → 运行准备", "同一会话的任务提交与创建记录。", start), directNodes: [cx ? "c-ui" : "ui", cx ? "c-server" : "server"] } : base
+    }
+    if (target.kind === "model-request") {
+      const previous = before.findLast(row => row.kind === "model-request" && same(row))
+      if (previous && before.slice(before.indexOf(previous) + 1).some(row => row.kind === "retry" && same(row))) {
+        return linked(`模型请求 #${target.index}：调用框内重试`, "已有重试状态记录；不把它补成重新运行整个入口循环。", previous)
+      }
+      const pendingCompact = before.findLast(row => same(row) && row.kind === "marker" && row.event.properties.part?.type === "compaction")
+      if (pendingCompact && !before.slice(before.indexOf(pendingCompact) + 1).some(row => same(row) && row.kind === "compact")) {
+        return { ...base, title: "压缩待办与模型调用", source: pendingCompact,
+          note: "存在未完成的压缩标记；本次采样可能位于“执行压缩”内部，不按普通模型入口补线。需结合摘要消息与完成记录确认。" }
+      }
+      if (!previous) {
+        const created = before.findLast(row => same(row) && (row.kind === "session" || row.node === "c-server"))
+        return mechanism("entry", target.child ? "子会话内部：采样前完整机制" : "运行准备 → 模型调用：完整入口机制",
+          "中间阶段依据固定源码展开。下面分支是常规路线的适用条件，未逐项采集为原生判断事件。", created)
+      }
+      const packet = packets.get(target.index), old = packets.get(previous.index)
+      const newResults = packet?.sessionID === target.sessionID ? packet.results.filter(id => !old?.results.includes(id)) : []
+      const result = before.findLast(row => same(row) && ["tool-completed", "tool-error", "tool_call_ended", "tool_call_runtime_ended"].includes(row.kind) && newResults.includes(row.callID))
+      if (result) return mechanism(result.tool === "task" || !result.tool && !target.child && result.node.endsWith("sub") ? "taskRepeat" : "repeat",
+        "工具结果 → 下一次模型输入", "本次请求携带同一调用 ID 的结果；循环中间阶段按源码说明，不是新增采集事件。", result)
+      return mechanism("repeat", "再次采样前的循环机制", "未确认本次输入与哪条新工具结果关联，不能仅凭相邻记录建立因果。以下只说明继续路径的适用条件。")
+    }
+    if (target.kind === "model-response") {
+      const request = rows.find(row => row.kind === "model-request" && row.index === target.index && same(row))
+      return request ? linked(`模型请求 #${target.index} ↔ 同一次响应`, "按请求编号与会话关联；请求和响应属于同一调用模型节点，不是两个节点间的跳转。", request) : base
+    }
+    if (["tool-pending", "tool-running"].includes(target.kind)) {
+      const owner = [...packets.values()].find(packet => packet.sessionID === target.sessionID && packet.proposals.some(tool => tool.callID && tool.callID === target.callID))
+      const request = owner && rows.find(row => row.kind === "model-request" && row.index === owner.index && same(row))
+      if (!request) return { ...base, title: "工具状态已捕获，提出调用的模型请求尚未关联", note: "需从模型响应里的调用 ID 核对；不能仅凭工具名补派发路线。" }
+      if (target.event.properties.part?.metadata?.providerExecuted) return { ...linked("服务端工具反馈", "这项由服务端执行，本地状态记录不证明经过客户端工具派发。", request) }
+      return mechanism(target.tool === "task" ? "dispatchTask" : "dispatchTool", `模型请求 #${owner.index} 的输出 → 工具调用`,
+        "模型输出中的调用 ID 与工具事件一致。工具可在响应流收集完成前启动，因此完整响应通知可能晚于工具开始。", request)
+    }
+    if (["tool-completed", "tool-error"].includes(target.kind)) {
+      const start = before.findLast(row => same(row) && row.callID === target.callID && ["tool-pending", "tool-running"].includes(row.kind))
+      return mechanism(target.tool === "task" ? "taskResult" : "toolResult", "工具处理 → 保存结果或错误",
+        start ? "开始与终态通过同一调用 ID 关联；写回反馈是源码职责说明。" : "仅有终态，没有开始记录；不补造开始时间。反馈写回按源码说明。", start)
+    }
+    if (target.kind === "returned") {
+      const response = before.findLast(row => same(row) && row.kind === "model-response")
+      if (!target.error && target.finish === "stop" && response?.toolCalls?.length === 0 && !response.error) {
+        return mechanism("textFinish", "模型输出 → 本次处理退出：完整收尾机制",
+          "已记录普通回答返回。正常文本处理先继续到循环头，再检查是否已完成；下面判断是源码对应机制，未逐项采集。", response)
+      }
+      return { ...base, title: "已返回，但退出分支未确认", note: "不能仅凭结束报告或错误文字选择正常、结构化输出、压缩或终止异常路线。" }
+    }
+    if (target.kind === "idle") {
+      const returned = before.findLast(row => row.kind === "returned" && same(row))
+      const response = before.findLast(row => row.kind === "model-response" && same(row))
+      if (!returned && target.child && target.finish === "stop" && !target.error && response?.toolCalls?.length === 0 && !response.error) {
+        return mechanism("textFinish", "子会话内部：回答完成并退出", "子会话消息报告 finish=stop 且没有新的工具项；内部收尾机制按源码展开，不画成父会话的跳转。", response)
+      }
+      return returned ? linked("处理退出 → 运行器转为空闲", "这是处理返回之后的会话生命周期报告，仍定位到退出节点；不重复补一遍收尾循环。", returned) : { ...base, title: "会话已空闲，退出路径未确认" }
+    }
+    if (target.kind === "compact") return { ...base, title: "压缩完成报告", note: "存在执行压缩的完成记录，但无法仅据此确定安排入口或继续／停止分支。" }
+    return base
+  }
+  return { short, toolHint, describeMessage, inputSummary, createTimeline, packetLinks, relation }
 })()
 for (const h of ["opencode", "codex"]) document.getElementById(h === "codex" ? "flowCodex" : "flowOpencode").innerHTML = HarnessFlows.render(h)
 /* ═══════════ 工具函数 ═══════════ */
@@ -633,8 +769,99 @@ function restoreLayout() {
 }
 window.matchMedia("(max-width: 760px)").addEventListener?.("change", restoreLayout)
 function updateModelInfo() {
-  document.getElementById("activeModel").textContent = harness === "codex"
-    ? statusSnapshot.codexModel ?? "—" : document.getElementById("modelSel").selectedOptions?.[0]?.textContent ?? statusSnapshot.ocModel ?? "—"
+  document.getElementById("activeModel").textContent = document.getElementById("modelSel").selectedOptions?.[0]?.textContent ?? (harness === "codex" ? statusSnapshot.codexModel : statusSnapshot.ocModel) ?? "—"
+  updateExtensionInfo()
+}
+const modelMenus = { opencode: null, codex: null }, modelChoices = {}, modelLoads = new Map(), effortChoices = {}
+function paintEffortMenu() {
+  const select = document.getElementById("effortSel"), model = document.getElementById("modelSel").value
+  const item = modelMenus[harness]?.models?.find(m => m.value === model)
+  const labels = { none: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高", ultra: "极高", persistent: "持续" }
+  const variants = item?.variants ?? []
+  const efforts = harness === "codex" ? item?.reasoningEfforts ?? []
+    : variants.filter(name => Object.hasOwn(labels, name) && (name !== "none" || variants.some(v => v !== "none" && Object.hasOwn(labels, v))))
+  const key = harness + ":" + model
+  select.innerHTML = ""
+  const base = document.createElement("option"); base.value = ""; base.textContent = "默认"; select.appendChild(base)
+  for (const name of efforts) {
+    const option = document.createElement("option"); option.value = name
+    option.textContent = labels[name] ?? name
+    select.appendChild(option)
+  }
+  select.value = efforts.includes(effortChoices[key]) ? effortChoices[key] : ""
+  select.disabled = !efforts.length
+  document.getElementById("effortControl").hidden = !efforts.length
+}
+document.getElementById("modelSel").onchange = () => { modelChoices[harness] = document.getElementById("modelSel").value; paintEffortMenu(); updateModelInfo() }
+document.getElementById("effortSel").onchange = () => { effortChoices[harness + ":" + document.getElementById("modelSel").value] = document.getElementById("effortSel").value }
+function paintModelMenu() {
+  const select = document.getElementById("modelSel"), menu = modelMenus[harness]
+  if (!menu) return
+  select.innerHTML = ""
+  for (const model of menu.models ?? []) {
+    const option = document.createElement("option")
+    option.value = model.value; option.textContent = model.label ?? model.value
+    select.appendChild(option)
+  }
+  if (!menu.models?.length) {
+    const option = document.createElement("option"); option.value = ""; option.textContent = "未发现模型，请配置原生 CLI 后重启"; select.appendChild(option)
+  }
+  select.value = menu.models?.some(m => m.value === modelChoices[harness]) ? modelChoices[harness] : menu.defaultModel ?? menu.models?.[0]?.value ?? ""
+  select.disabled = !menu.models?.length
+  paintEffortMenu()
+  updateModelInfo(); updateRunControls()
+}
+async function loadModels(target = harness) {
+  if (modelLoads.has(target)) return modelLoads.get(target)
+  const loading = (async () => {
+    try {
+      const response = await fetch(`/api/models?harness=${target}`, { cache: "no-store" })
+      if (!response.ok) return
+      const menu = await response.json()
+      modelMenus[target] = menu.source ? menu : { models: [], defaultModel: null, source: "legacy-service" }
+      if (harness === target) paintModelMenu()
+    } finally { modelLoads.delete(target) }
+  })().catch(() => {})
+  modelLoads.set(target, loading)
+  return loading
+}
+const extensionDiscoveries = new Map()
+function extensionSnapshotKey(target = harness) {
+  return jsonText({ harness: target, state: statusSnapshot.extensions?.state,
+    configured: statusSnapshot.extensions?.[target], ocReady: statusSnapshot.ocReady })
+}
+function updateExtensionInfo() {
+  const item = statusSnapshot.extensions?.[harness], state = statusSnapshot.extensions?.state
+  const cached = extensionDiscoveries.get(harness)
+  const discovery = cached?.key === extensionSnapshotKey() ? cached : null
+  document.getElementById("extensionSummary").textContent = item
+    ? `专用扩展配置：技能 ${item.skills?.length ?? 0}、MCP ${item.mcp?.length ?? 0}、插件 ${item.plugins?.length ?? 0}。${state?.message ?? ""} 配置可用不表示本次都已调用。`
+    : "当前服务没有扩展配置快照；重启后加载专用扩展。"
+  const button = document.getElementById("extensionCheckBtn")
+  button.textContent = harness === "codex" ? "查看 Codex 发现检查命令" : "核对 OpenCode 发现结果"
+  button.disabled = discovery?.pending === true
+  document.getElementById("extensionInfo").textContent = item || discovery
+    ? jsonText({ state, configured: item, ...(discovery ? { discovery: discovery.value } : {}) }) : ""
+}
+document.getElementById("extensionCheckBtn").onclick = async () => {
+  const target = harness, key = extensionSnapshotKey(target)
+  if (target === "codex") {
+    extensionDiscoveries.set(target, { key, value: { harness: "codex", status: "网页未采集原生发现结果",
+      command: "npm run extensions:check", note: "在项目目录运行：检查 Codex skills/list 和 MCP 工具发现，不提交模型任务；输出路径在终端显示。" } })
+    return updateExtensionInfo()
+  }
+  extensionDiscoveries.set(target, { key, pending: true, value: { harness: target, status: "正在核对 CLI 发现结果…" } })
+  updateExtensionInfo()
+  try {
+    const response = await fetch("/api/extensions")
+    const data = await response.json()
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const observed = { ...data.observed, harness: "opencode" }
+    if (Array.isArray(observed.skills)) observed.skills = observed.skills.map(({ name, description, location }) => ({ name, description, location }))
+    extensionDiscoveries.set(target, { key, value: observed })
+  } catch (err) {
+    extensionDiscoveries.set(target, { key, value: { harness: target, error: "发现结果读取失败，请重启加载新配置后重试：" + String(err) } })
+  } finally { updateExtensionInfo() }
 }
 function cliAvailable() {
   // Old recorded snapshots predate cliStatus; keep those replays usable.
@@ -642,19 +869,20 @@ function cliAvailable() {
     : harness === "codex" ? !!statusSnapshot.versions?.codex : statusSnapshot.ocReady === true
 }
 function updateRunControls() {
-  const ready = cliAvailable(), state = statusSnapshot.cliStatus?.[harness]
+  const ready = cliAvailable() && modelMenus[harness]?.source !== "legacy-service" && (!statusSnapshot.nativeModelConfiguration || !!modelMenus[harness]?.models?.length), state = statusSnapshot.cliStatus?.[harness]
   const button = document.getElementById("runBtn")
-  button.disabled = runState === "busy" || !ready
-  button.textContent = ready ? "运行" : state?.phase === "error" ? "CLI 不可用" : "准备中…"
+  button.disabled = runState === "busy" || Object.values(statusSnapshot.conversations ?? {}).some(item => item.active) || !ready
+  button.textContent = ready ? "运行" : state?.phase === "error" ? "CLI 不可用" : cliAvailable() ? "未配置模型" : "准备中…"
   button.title = state?.message ?? (ready ? "" : "等待固定 CLI 就绪")
   document.getElementById("cliMessage").textContent = state?.message ?? (ready ? "已就绪（历史记录）" : "等待固定 CLI 就绪")
   if (runState === "idle" && !ready) {
-    runBadge.textContent = state?.phase === "error" ? "CLI 不可用" : "准备中"
+    runBadge.textContent = state?.phase === "error" ? "CLI 不可用" : cliAvailable() ? "未配置模型" : "准备中"
     runBadge.style.color = state?.phase === "error" ? "var(--red)" : ""
   } else if (runState === "idle") {
     runBadge.textContent = "就绪"
     runBadge.style.color = ""
   }
+  updateContinueControl()
 }
 function applyStatus(status) {
   statusSnapshot = status
@@ -664,9 +892,11 @@ function applyStatus(status) {
   document.getElementById("verBadge").title = jsonText({ versions: status.versions, sourceLock: status.sourceLock })
   document.getElementById("sourceInfo").textContent = jsonText(status.sourceLock ?? SOURCE_PINS)
   document.getElementById("cliInfo").textContent = jsonText({ directory: status.cliDirectory, status: status.cliStatus })
+  document.getElementById("nativeModelInfo").textContent = jsonText(status.nativeModelConfiguration ?? { note: "历史服务没有原生配置来源快照" })
   document.getElementById("workDirectory").textContent = status.targetProject ?? "—"
   updateModelInfo()
   updateRunControls()
+  if (status.nativeModelConfiguration && modelMenus[harness]?.models?.length !== status.nativeModelConfiguration.counts?.[harness]) loadModels(harness)
 }
 async function pollStatus() {
   try {
@@ -698,6 +928,17 @@ const NAMES = Object.fromEntries(Object.entries(HarnessFlows.graphs).map(([h, gr
 const nodeNames = () => NAMES[harness]
 const eventsByHarness = { opencode: [], codex: [] }   // 切换 harness 时回放用
 const rootByHarness = { opencode: null, codex: null }
+const continueChoices = { opencode: false, codex: false }
+let currentConversationTurn = 0
+function updateContinueControl() {
+  const checkbox = document.getElementById("continueCheck")
+  const hasSession = !!(currentSession ?? rootByHarness[harness])
+  const busy = runState === "busy" || Object.values(statusSnapshot.conversations ?? {}).some(item => item.active)
+  document.getElementById("continueControl").hidden = !hasSession || !(continueChoices[harness] || ["ended", "failed", "interrupted"].includes(runState))
+  checkbox.checked = continueChoices[harness]
+  checkbox.disabled = busy || !hasSession
+}
+document.getElementById("continueCheck").onchange = () => { continueChoices[harness] = document.getElementById("continueCheck").checked; updateContinueControl() }
 let currentRunID = null
 const store = {}              // nodeId → [{seq,time,title,meta,kind,data}]
 let selectedNode = "llm"      // 默认看 LLM 调用明细
@@ -710,6 +951,8 @@ const rawDetail = (title, value) => `<details class="raw"><summary>${escapeHtml(
 
 const execution = HarnessEvidence.createTimeline()
 let executionSelectedKey = null, executionTimer = null, processView = "execution"
+const relationshipPackets = new Map()
+let mechanismFocus = null
 function setProcessView(view) {
   processView = view
   document.getElementById("executionView").hidden = view !== "execution"
@@ -721,9 +964,46 @@ function setProcessView(view) {
 document.getElementById("executionTab").onclick = () => setProcessView("execution")
 document.getElementById("transcriptTab").onclick = () => setProcessView("transcript")
 document.getElementById("executionScope").onchange = () => renderExecution()
+document.getElementById("executionMode").onchange = () => { mechanismFocus = null; renderExecution() }
 function visibleExecution() {
   const scope = document.getElementById("executionScope").value || "all"
   return execution.entries().filter(r => scope === "all" || (scope === "child" ? r.child : !r.child && !r.scope.startsWith("未关联会话")))
+}
+function flowEntries() {
+  const all = execution.entries(), result = [], full = (document.getElementById("executionMode").value || "full") === "full"
+  for (const row of visibleExecution()) {
+    const relation = HarnessEvidence.relation(all, row, relationshipPackets)
+    if (full && relation.path) {
+      const sourceNode = relation.source?.innerNode ?? relation.source?.node
+      const first = sourceNode === relation.path.nodes[0] ? 1 : 0
+      for (let n = first; n < relation.path.steps.length - 1; n++) {
+        const phase = relation.path.steps[n]
+        result.push({ key: `${row.key}:mechanism:${phase.id}`, row, relation, phase, type: "mechanism" })
+      }
+    }
+    result.push({ key: row.key, row, relation, type: "event" })
+  }
+  return result
+}
+function highlightedMechanism() {
+  if (document.getElementById("executionMode").value === "events") return { nodes: [], edges: [] }
+  const row = execution.entries().find(r => r.key === executionSelectedKey)
+  if (!row) return { nodes: [], edges: [] }
+  const relation = HarnessEvidence.relation(execution.entries(), row, relationshipPackets)
+  if (relation.nested) return { nodes: [harness === "codex" ? "c-sub" : "sub"], edges: [] }
+  return { nodes: relation.path?.nodes ?? relation.directNodes ?? [], edges: relation.path?.edges ?? [] }
+}
+function paintMechanism() {
+  const highlighted = highlightedMechanism(), chosen = execution.entries().find(r => r.key === executionSelectedKey)
+  const graphId = harness === "codex" ? "flowCodex" : "flowOpencode"
+  document.getElementById("flowLevel").textContent = chosen?.child ? "子会话内部 · 父图收起在管理子任务" : "主会话机制"
+  document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(el => {
+    el.classList.toggle("mechanism-node", highlighted.nodes.includes(el.dataset.node))
+    el.classList.toggle("mechanism-focus", !!mechanismFocus && el.dataset.node === (chosen?.child ? harness === "codex" ? "c-sub" : "sub" : mechanismFocus.node))
+  })
+  if (typeof document.querySelector === "function") document.querySelectorAll(`#${graphId} .flow-edge`).forEach(edge => {
+    edge.classList.toggle("mechanism-route", highlighted.edges.some(e => e.from === edge.dataset.from && e.to === edge.dataset.to))
+  })
 }
 function captureExecution(evt) {
   const p = evt.properties ?? {}, raw = p.event?.payload ?? {}
@@ -736,17 +1016,26 @@ function captureExecution(evt) {
 }
 function renderExecution() {
   clearTimeout(executionTimer)
-  const all = execution.entries(), visible = visibleExecution(), coverage = execution.coverage()
+  const all = execution.entries(), visible = visibleExecution(), flow = flowEntries(), coverage = execution.coverage()
   const list = document.getElementById("executionList"), follow = list.scrollHeight - list.scrollTop - list.clientHeight < 90
   const start = all.find(r => r.kind === "start")?.time
-  document.getElementById("executionCount").textContent = `${visible.length} / ${all.length} 条关键记录`
+  document.getElementById("executionCount").textContent = `${visible.length} / ${all.length} 条采集记录 · ${flow.filter(r => r.type === "mechanism").length} 个源码阶段`
   const chosen = all.find(r => r.key === executionSelectedKey)
   document.getElementById("executionEvidence").hidden = !chosen
+  document.getElementById("executionEvidenceSummary").textContent = mechanismFocus ? "关联的采集事件（不是该源码阶段的原生记录）" : "所选时刻的原始事件"
+  document.getElementById("executionEvidenceNote").textContent = mechanismFocus ? "源码阶段没有原生时间戳。下方是与这段机制关联的请求或结果事件，不能当作该判断的执行日志。" : "此处保留该时刻的证据；右侧节点记录可能已更新为最新状态。"
   document.getElementById("executionEvent").textContent = chosen ? jsonText(chosen.event) : ""
-  list.innerHTML = visible.map(r => {
+  list.innerHTML = flow.map((item, position) => {
+    const r = item.row
     const n = all.indexOf(r), elapsed = Date.parse(r.time) - Date.parse(start)
     const time = Number.isFinite(elapsed) ? "+" + (elapsed / 1000).toFixed(3) + "s" : "时刻未提供"
-    return `<button class="execution-row${r.child ? " child" : ""}${r.key === executionSelectedKey ? " chosen" : ""}" data-step="${n}" onclick="focusExecution(${n})"><span class="step-meta"><span>记录 ${n + 1}</span><span title="${escapeHtml(r.time ?? "")}">接收 ${time}</span><span>${escapeHtml(r.scope)}</span><span>${escapeHtml(nodeNames()[r.node] ?? r.node)}</span></span><b>${escapeHtml(r.title)}</b><span class="step-detail">${escapeHtml(r.detail)}</span></button>`
+    const selected = item.type === "mechanism" ? mechanismFocus?.key === item.key : r.key === executionSelectedKey && !mechanismFocus
+    if (item.type === "mechanism") return `<button class="execution-row mechanism-step${r.child ? " child" : ""}${selected ? " chosen" : ""}" data-flow-step="${position}" onclick="focusFlowEntry(${position})"><span class="step-meta"><span>源码阶段 · 非采集事件</span><span>${escapeHtml(r.scope)}</span><span>对应记录 ${n + 1}</span></span><b>${escapeHtml(item.phase.title)}</b><span class="step-detail">${item.phase.branch ? "路线条件：" + escapeHtml(item.phase.branch) + "（未逐项采集）" : "依据固定源码的处理中间阶段，没有逐步时间戳。"}</span></button>`
+    const relation = item.relation
+    const related = relation.source ? `关联记录 ${all.indexOf(relation.source) + 1}：${relation.source.title}` : ""
+    const path = relation.path ? relation.path.steps.map(step => step.title + (step.branch ? `〔${step.branch}〕` : "")).join(" → ") : ""
+    const explanation = (document.getElementById("executionMode").value === "events" && relation.type === "mechanism") || relation.type === "unlinked" && !["model-request", "model-response", "returned", "idle"].includes(r.kind) ? "" : `<div class="execution-relation"><b>${escapeHtml(relation.title)}</b>${related ? "<br>" + escapeHtml(related) : ""}${path ? "<br>源码路线：" + escapeHtml(path) : ""}<span class="route-note">${escapeHtml(relation.note)}${relation.path ? " 条件：" + escapeHtml(relation.path.condition) : ""}${relation.nested ? " 子阶段位于管理子任务内部，不连接成父会话主线。" : ""}</span></div>`
+    return `<button class="execution-row${r.child ? " child" : ""}${selected ? " chosen" : ""}" data-step="${n}" data-flow-step="${position}" onclick="focusExecution(${n})"><span class="step-meta"><span>记录 ${n + 1}</span><span title="${escapeHtml(r.time ?? "")}">接收 ${time}</span><span>${escapeHtml(r.scope)}</span><span>${escapeHtml(nodeNames()[r.node] ?? r.node)}${r.innerNode ? " · 内部 " + escapeHtml(nodeNames()[r.innerNode]) : ""}</span></span><b>${escapeHtml(r.title)}</b><span class="step-detail">${escapeHtml(r.detail)}</span></button>${explanation}`
   }).join("") || '<div class="empty">当前筛选下没有关键记录。</div>'
   if (follow && !executionSelectedKey) list.scrollTop = list.scrollHeight
   const graphs = HarnessFlows.graphs[harness].nodes
@@ -758,13 +1047,15 @@ function renderExecution() {
     if (el) el.title = node.title + "：" + label
     return `<li><b>${escapeHtml(node.title)}</b>：${escapeHtml(label)}</li>`
   }).join("")
-  const selected = visible.findIndex(r => r.key === executionSelectedKey)
-  document.getElementById("previousStep").disabled = !visible.length || selected <= 0
-  document.getElementById("nextStep").disabled = !visible.length || selected === visible.length - 1
+  const selected = flow.findIndex(item => item.key === (mechanismFocus?.key ?? executionSelectedKey))
+  document.getElementById("previousStep").disabled = !flow.length || selected <= 0
+  document.getElementById("nextStep").disabled = !flow.length || selected === flow.length - 1
+  paintMechanism()
 }
 function focusExecution(index) {
   const row = execution.entries()[index]
   if (!row) return
+  mechanismFocus = null
   executionSelectedKey = row.key
   setView("flow", true); setView("details", true)
   activeTab = "records"
@@ -782,10 +1073,24 @@ function focusExecution(index) {
   renderExecution()
   if (typeof document.querySelector === "function") document.querySelector(`#executionList [data-step="${index}"]`)?.scrollIntoView({ block: "nearest" })
 }
+function focusFlowEntry(position) {
+  const item = flowEntries()[position]
+  if (!item) return
+  const index = execution.entries().indexOf(item.row)
+  if (item.type === "event") return focusExecution(index)
+  executionSelectedKey = item.row.key
+  mechanismFocus = { key: item.key, node: item.phase.id, rowKey: item.row.key }
+  setView("flow", true); setView("details", true)
+  activeTab = "doc"
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === "doc"))
+  selectNode(item.row.child ? harness === "codex" ? "c-sub" : "sub" : item.phase.id)
+  renderExecution()
+  if (typeof document.querySelector === "function") document.querySelector(`#executionList [data-flow-step="${position}"]`)?.scrollIntoView({ block: "nearest" })
+}
 function moveExecution(delta) {
-  const rows = visibleExecution(), at = rows.findIndex(r => r.key === executionSelectedKey)
-  const next = rows[Math.max(0, Math.min(rows.length - 1, at + delta))]
-  if (next) focusExecution(execution.entries().indexOf(next))
+  const rows = flowEntries(), at = rows.findIndex(item => item.key === (mechanismFocus?.key ?? executionSelectedKey))
+  const position = Math.max(0, Math.min(rows.length - 1, at + delta))
+  if (rows[position]) focusFlowEntry(position)
 }
 document.getElementById("previousStep").onclick = () => moveExecution(-1)
 document.getElementById("nextStep").onclick = () => moveExecution(1)
@@ -814,8 +1119,9 @@ let lastFinishInfo = null   // 最后一次 assistant finish 信息，用于「�
 
 function selectNode(id) {
   const chosen = execution.entries().find(r => r.key === executionSelectedKey)
-  if (chosen && chosen.node !== id) {
+  if (chosen && chosen.node !== id && !(mechanismFocus && id === (chosen.child ? harness === "codex" ? "c-sub" : "sub" : mechanismFocus.node))) {
     executionSelectedKey = null
+    mechanismFocus = null
     document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(e => e.classList.remove("step-focus"))
     renderExecution()
   }
@@ -882,9 +1188,12 @@ async function toggleRecDetail(div, rec) {
       const { calls = [] } = await res.json()
       if (!div.isConnected || !div.classList.contains("open")) return
       if (revision !== llmRevision) { div.classList.remove("open"); return toggleRecDetail(div, rec) }
+      for (const call of calls) if (call.harness === harness && (!call.runID || !currentRunID || call.runID === currentRunID)) relationshipPackets.set(call.index, HarnessEvidence.packetLinks(call))
+      renderExecution()
       const c = calls.find(x => x.index === rec.data.index && x.harness === (rec.event?.harness ?? harness)
         && (!x.runID || !rec.event?.runID || x.runID === rec.event.runID))
       detail.innerHTML = (c ? rec.kind === "context" ? renderHistory(c) : renderLlmCall(c) : "<div class='waiting'>尚未捕获详情，可重新展开。</div>") + renderCaptureEvents(rec)
+      if (c && exportScopes[c.index] && typeof document.querySelector === "function") setExportScope(c.index, exportScopes[c.index])
       populateTemplateSelects(detail)
     } catch (err) { detail.innerHTML = `<div class="waiting">加载失败，可重新展开：${escapeHtml(String(err))}</div>` }
   } else {
@@ -893,7 +1202,8 @@ async function toggleRecDetail(div, rec) {
 }
 
 function renderDoc() {
-  document.getElementById("nodePanel").innerHTML = `<div class="doc">${DOCS[harness][selectedNode] ?? "暂无说明"}</div>`
+  const node = mechanismFocus?.node ?? selectedNode
+  document.getElementById("nodePanel").innerHTML = (mechanismFocus ? '<p class="readable-note">当前查看紫色源码阶段：说明该阶段的机制，不表示已采集到这次执行的函数时间或判断结果。</p>' : "") + `<div class="doc">${DOCS[harness][node] ?? "暂无说明"}</div>`
 }
 
 /* 捕获报文是 API 边界事实，不是服务端最终提示词或完整推理。 */
@@ -902,11 +1212,12 @@ function capturedContext(c) {
   const codex = c.harness === "codex"
   const payload = c.anthropicRequest ?? original
   const input = payload.request ?? payload
-  const anthropic = Boolean(c.anthropicRequest) || !codex
+  const anthropic = Boolean(c.anthropicRequest) || c.protocol === "anthropic" || !codex && !c.protocol
+  const chat = c.protocol === "chat"
   const raw = c.anthropicRequest ? c.upstreamRequestRaw : c.requestRaw
   requestCache[c.index] = typeof raw === "string" ? raw : JSON.stringify(payload, null, 2)
-  const ownItems = anthropic ? input.messages : input.input
-  const context = { format: anthropic ? "anthropic" : "responses", items: Array.isArray(ownItems) ? ownItems : null,
+  const ownItems = anthropic || chat ? input.messages : input.input
+  const context = { format: anthropic ? "anthropic" : chat ? "chat" : "responses", items: Array.isArray(ownItems) ? ownItems : null,
     system: anthropic ? input.system ?? null : input.instructions ?? null, tools: input.tools ?? null,
     kind: c.anthropicRequest ? "upstream" : c.source === "native-trace" ? "trace" : "forwarded",
      originalText: typeof raw === "string", previousResponseID: input.previous_response_id ?? null }
@@ -955,7 +1266,7 @@ function focusToolCall(index, position) {
 }
 function renderLlmCall(c) {
   const { context, original, payload } = capturedContext(c)
-  let html = `<p class="readable-note">一次模型调用包含“输入”和“响应”。响应可以同时包含文字与工具调用；实际执行工具的过程另见执行顺序。</p>` + renderModelInput(c.index, context)
+  let html = `<p class="readable-note">一次模型调用包含“输入”和“响应”。响应可以同时包含文字与工具调用；实际执行工具的过程另见执行顺序。</p>` + renderExtensionLayers(c, context) + renderModelInput(c.index, context)
   if (c.modelInput?.kind === "reconstructed" || c.modelInput?.kind === "partial") html += rawDetail("重建上下文（分析结果，非原始请求）", c.modelInput)
   if (c.response) {
     const tools = c.response.toolUses?.length ? c.response.toolUses : (c.response.toolCalls ?? []).map(name => ({ name }))
@@ -975,7 +1286,7 @@ function renderLlmCall(c) {
   } else html += `<div class="waiting">响应尚未捕获；收到 response 事件后自动刷新已展开记录。</div>`
   html += renderTemplatePreviewSection(c.index)
   html += `<details class="raw"><summary>技术详情 · 完整 API 报文与解析数据</summary><p class="readable-note">用于检查实际发送的字段、完整输出、解析差异和错误。这里的 API 报文不同于下方发给网页的观察器通知。</p>`
-  html += rawDetail("完整请求体 JSON（实际模型输入）", payload)
+  html += `<details class="raw api-json" data-api-index="${c.index}"><summary class="api-json-title">完整请求体 JSON（实际模型输入）</summary><div class="api-json-controls"><select class="mini api-json-scope" onchange="setExportScope(${c.index},this.value)"><option value="request">实际请求 · 不含本次响应</option><option value="call">本次调用记录 · 含响应与工具证据</option></select><button class="mini" onclick="downloadInput(${c.index},true)">下载 JSON</button></div><p class="api-json-note readable-note">实际请求保持原样；含响应的调用记录是分析封装，不是发送给模型的请求体。</p><pre class="api-json-text">${escapeHtml(jsonText(payload))}</pre></details>`
   if (c.anthropicRequest) html += rawDetail("Codex 原始请求（转译前；不保证与上游等价）", original)
   if (c.translationWarnings) html += rawDetail("转译说明", c.translationWarnings)
   if (c.rawResponse != null) html += rawDetail(c.source === "native-trace" ? "Codex 捕获的响应项" : "完整响应流（原始 SSE，含文字及工具调用片段）", c.rawResponse)
@@ -985,11 +1296,36 @@ function renderLlmCall(c) {
   if (c.error) html += rawDetail("错误", c.error)
   return html
 }
+function renderExtensionLayers(c, context) {
+  const inventory = c.extensions
+  if (!inventory) return '<p class="readable-note">这条历史记录没有扩展配置快照，不用当前配置反推当时加载内容。</p>'
+  const configured = [...(inventory.skills ?? []).map(s => "技能 " + s.name), ...(inventory.mcp ?? []).map(s => "MCP " + s.name), ...(inventory.plugins ?? []).map(s => "插件 " + s.name)]
+  const items = context.items ?? [], summaries = []
+  const text = value => typeof value === "string" ? value : Array.isArray(value)
+    ? value.map(block => typeof block.text === "string" ? block.text : typeof block.content === "string" ? block.content : jsonText(block)).join("\n") : jsonText(value)
+  const catalog = text(context.system ?? "") + "\n" + items.filter(item => item.role === "developer" || item.role === "system").map(item => text(item.content)).join("\n") + "\n" + text(context.tools ?? [])
+  const allText = items.map(item => text(item.content ?? item)).join("\n")
+  const tools = []
+  const collect = (list, prefix = "") => { for (const tool of list ?? []) { if (Array.isArray(tool.tools)) collect(tool.tools, prefix + (tool.name ?? "namespace") + "."); else if (tool.name ?? tool.function?.name) tools.push(prefix + (tool.name ?? tool.function.name)) } }
+  collect(context.tools)
+  for (const item of items) if (item.type === "additional_tools") collect(item.tools)
+  for (const skill of inventory.skills ?? []) {
+    const catalogSeen = catalog.includes(skill.name)
+    const markerSeen = allText.includes(`<skill_content name="${skill.name}"`) || allText.includes(`<name>${skill.name}</name>`)
+    summaries.push(`${skill.name}：${catalogSeen ? "技能索引／工具描述中可见名字" : "当前选取字段未命中索引"}；${markerSeen ? "请求中存在技能内容标记，结合调用记录核对加载来源" : "未发现正文容器标记，不表示全文已加载"}`)
+  }
+  for (const server of inventory.mcp ?? []) {
+    const names = tools.filter(name => name.startsWith(server.name + "_") || name.includes("mcp__" + server.name + "__") || name.includes(server.name + "."))
+    summaries.push(`${server.name}：本次工具定义中 ${names.length ? "可见 " + names.join("、") : "未提供该服务工具；可能尚未发现或由后续工具搜索加载"}`)
+  }
+  if ((inventory.plugins ?? []).some(item => item.name === "dcp")) summaries.push("DCP：" + (tools.includes("compress") ? "本次工具定义中可见 compress；原始输入保留插件处理后的实际内容" : "本次工具定义未见 compress；配置启用不等于该次已提供或调用"))
+  return `<section class="extension-layers"><h4>本次扩展配置与可见线索</h4><p class="readable-note">${escapeHtml(configured.join("、") || "未启用本观察器安装的外部扩展；内置项另见实际输入")}。配置快照不是使用证明，文本标记命中也不单独证明文件已被读取。技能通常先提供索引，调用后才加入正文／参考资料。</p><ul class="history-summary">${summaries.map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ul>${rawDetail("扩展来源及固定版本（配置快照）", inventory)}</section>`
+}
 
 function renderModelInput(index, context) {
   const labels = { trace: "Codex 原生记录", upstream: "转译后上游请求", forwarded: "代理原样转发" }
   const items = context.items ?? []
-  let html = `<section class="model-input" data-request-index="${Number(index)}"><h4>请求输入 <span class="chip">${context.format === "anthropic" ? "messages" : "input"}: ${Array.isArray(context.items) ? items.length + " 项" : "未记录"}</span><span class="chip">${labels[context.kind] ?? "未确认"}</span><button class="mini" onclick="copyInput(${Number(index)},this)">复制请求</button><button class="mini" onclick="downloadInput(${Number(index)},true)">下载 JSON</button><button class="mini" onclick="downloadInput(${Number(index)},false)">下载原文</button></h4>`
+  let html = `<section class="model-input" data-request-index="${Number(index)}"><h4>请求输入 <span class="chip">${context.format === "anthropic" ? "messages" : "input"}: ${Array.isArray(context.items) ? items.length + " 项" : "未记录"}</span><span class="chip">${labels[context.kind] ?? "未确认"}</span><select class="mini input-export-scope" onchange="setExportScope(${Number(index)},this.value)"><option value="request">实际请求 · 无本次响应</option><option value="call">调用记录 · 含本次响应</option></select><button class="mini" onclick="copyInput(${Number(index)},this)">复制 JSON</button><button class="mini" onclick="downloadInput(${Number(index)},true)">下载 JSON</button><button class="mini download-raw" onclick="downloadInput(${Number(index)},false)">下载原文</button></h4>`
   const note = context.kind === "trace" ? "下载 Codex CLI 原生记录的请求；trace 不是网络抓包，特殊预热路径可能记录逻辑请求。"
     : context.kind === "upstream" ? "下载实际发给上游 API 的转译后请求体。" : "下载代理收到并原样转发给模型 API 的请求体。"
   html += `<p class="model-input-note">${escapeHtml(note)}${!context.originalText ? " 旧记录仅保存解析结果，无法校验原始字节。" : ""}</p>`
@@ -1012,6 +1348,35 @@ function renderModelInput(index, context) {
 
 /* Raw captured request text only; reconstructed context is never exported here. */
 const requestCache = {}
+const exportScopes = {}, previewPreferences = {}
+async function fetchCallRecord(index) {
+  const response = await fetch(`/api/call-record?index=${index}`, { cache: "no-store" })
+  const data = await response.json()
+  if (!response.ok || data.kind !== "harness-viz-call-record") throw new Error(data.error ?? "服务未提供调用记录，请重启 npm start")
+  return data
+}
+async function setExportScope(index, mode) {
+  exportScopes[index] = mode
+  document.querySelectorAll(`[data-request-index="${index}"] .input-export-scope,[data-api-index="${index}"] .api-json-scope`).forEach(select => { select.value = mode })
+  document.querySelectorAll(`[data-request-index="${index}"] .download-raw`).forEach(button => { button.textContent = mode === "call" ? "下载调用记录" : "下载原文" })
+  document.querySelectorAll(`.model-input[data-request-index="${index}"]`).forEach(section => {
+    const note = section.querySelector(".model-input-note")
+    if (!note) return
+    section.dataset.requestDownloadNote ??= note.textContent
+    note.textContent = mode === "call" ? "下载请求＋本次已捕获响应／关联工具证据的调用记录（分析封装，不是实际请求体）。下面的原请求内容保持不变。" : section.dataset.requestDownloadNote
+  })
+  const sections = [...document.querySelectorAll(`.api-json[data-api-index="${index}"]`)]
+  if (!sections.length) return
+  for (const section of sections) {
+    section.querySelector(".api-json-title").textContent = mode === "call" ? "本次调用记录 JSON（请求＋响应＋关联工具证据）" : "完整请求体 JSON（实际模型输入）"
+    section.querySelector(".api-json-text").textContent = mode === "request" ? formatRequestJSON(requestCache[index]) : "读取本次调用记录…"
+  }
+  if (mode === "request") return
+  try {
+    const record = await fetchCallRecord(index)
+    for (const section of sections) if (section.isConnected && exportScopes[index] === mode) section.querySelector(".api-json-text").textContent = jsonText(record)
+  } catch (err) { for (const section of sections) if (section.isConnected && exportScopes[index] === mode) section.querySelector(".api-json-text").textContent = String(err) }
+}
 
 /* 模板预览：已捕获请求按所选公开模板本地拼接。 */
 let templateListPromise = null
@@ -1033,10 +1398,17 @@ async function populateTemplateSelects(rootEl = document) {
       option.title = `${t.model} @ ${t.revision.slice(0, 12)}`
       select.appendChild(option)
     }
+    const index = Number(select.closest(".template-preview").dataset.previewIndex)
+    const saved = previewPreferences[index]
+    if (saved) {
+      select.value = saved.templateId
+      select.closest(".template-preview").querySelector(".template-scope").value = saved.mode
+      if (select.value) renderTemplate(index, select)
+    }
   }
 }
 function renderTemplatePreviewSection(index) {
-  return `<section class="model-input template-preview" data-preview-index="${Number(index)}"><h4>模板预览<select class="mini template-select" onchange="renderTemplate(${Number(index)},this)"><option value="">选择模板…</option></select><button class="mini" onclick="renderTemplate(${Number(index)},this.parentElement.querySelector('select.template-select'))">生成预览</button><button class="mini copy-rendered" onclick="copyRendered(${Number(index)},this)" disabled>复制</button><button class="mini download-rendered" onclick="downloadRendered(${Number(index)})" disabled>下载</button></h4><pre class="template-output" hidden></pre><details class="raw template-details" hidden><summary>渲染详情</summary><p class="template-meta"></p><p class="model-input-note template-context"></p><p class="template-warnings" hidden></p><a class="template-source" target="_blank" rel="noopener noreferrer">模板源文件</a></details></section>`
+  return `<section class="model-input template-preview" data-preview-index="${Number(index)}"><h4>模板预览<select class="mini template-select" onchange="renderTemplate(${Number(index)},this)"><option value="">选择模板…</option></select><select class="mini template-scope" onchange="renderTemplate(${Number(index)},this.parentElement.querySelector('select.template-select'))"><option value="request">请求版 · 不含本次响应</option><option value="call">完整记录版 · 含本次响应/工具反馈</option></select><button class="mini" onclick="renderTemplate(${Number(index)},this.parentElement.querySelector('select.template-select'))">生成／刷新预览</button><button class="mini copy-rendered" onclick="copyRendered(${Number(index)},this)" disabled>复制</button><button class="mini download-rendered" onclick="downloadRendered(${Number(index)})" disabled>下载</button></h4><pre class="template-output" hidden></pre><details class="raw template-details" hidden><summary>渲染详情</summary><p class="template-meta"></p><p class="model-input-note template-context"></p><p class="template-warnings" hidden></p><a class="template-source" target="_blank" rel="noopener noreferrer">模板源文件</a></details></section>`
 }
 async function renderTemplate(index, select) {
   const section = select.closest(".template-preview")
@@ -1048,19 +1420,31 @@ async function renderTemplate(index, select) {
   details.hidden = true
   details.open = false
   const templateId = select.value
+  const mode = section.querySelector(".template-scope").value || "request"
+  previewPreferences[index] = { templateId, mode }
   if (!templateId) { output.hidden = true; return }
-  const key = index + ":" + templateId
+  const key = index + ":" + templateId + ":" + mode
   output.hidden = false
   output.textContent = "渲染中…"
-  if (!renderedCache[key]) {
+  if (!renderedCache[key] || mode === "call") {
     try {
-      const res = await fetch(`/api/template-preview?index=${index}&template=${encodeURIComponent(templateId)}`, { cache: "no-store" })
+      const res = await fetch(`/api/template-preview?index=${index}&template=${encodeURIComponent(templateId)}&mode=${mode}`, { cache: "no-store" })
       const data = await res.json()
-      if (!res.ok || !data.ok) { output.textContent = "渲染失败：" + (data.error ?? `HTTP ${res.status}`); return }
+      if (!res.ok || !data.ok) {
+        if (section.isConnected && select.value === templateId && section.querySelector(".template-scope").value === mode) output.textContent = "渲染失败：" + (data.error ?? `HTTP ${res.status}`)
+        return
+      }
+      if (mode === "call" && data.mode !== "call") {
+        if (section.isConnected && select.value === templateId && section.querySelector(".template-scope").value === mode) output.textContent = "服务尚未支持含响应预览，请重启 npm start"
+        return
+      }
       renderedCache[key] = data
-    } catch (err) { output.textContent = "渲染失败：" + String(err); return }
+    } catch (err) {
+      if (section.isConnected && select.value === templateId && section.querySelector(".template-scope").value === mode) output.textContent = "渲染失败：" + String(err)
+      return
+    }
   }
-  if (!section.isConnected || select.value !== templateId) return
+  if (!section.isConnected || select.value !== templateId || section.querySelector(".template-scope").value !== mode) return
   const data = renderedCache[key]
   section.dataset.currentKey = key
   output.textContent = data.text
@@ -1092,13 +1476,16 @@ function downloadRendered(index) {
   const blob = new Blob([data.text], { type: "text/plain;charset=utf-8" })
   const link = document.createElement("a")
   link.href = URL.createObjectURL(blob)
-  link.download = `model-request-${index}.rendered-${data.template.id}.txt`
+  link.download = `${data.mode === "call" ? "model-call" : "model-request"}-${index}.rendered-${data.template.id}.txt`
   link.click()
   URL.revokeObjectURL(link.href)
 }
 
-function copyInput(index, button) {
-  navigator.clipboard.writeText(requestCache[index])
+async function copyInput(index, button) {
+  try {
+    const text = exportScopes[index] === "call" ? jsonText(await fetchCallRecord(index)) : requestCache[index]
+    await navigator.clipboard.writeText(text)
+  } catch (err) { addError("复制失败：" + String(err)); return }
   button.textContent = "已复制"; setTimeout(() => { button.textContent = "复制" }, 1200)
 }
 function formatRequestJSON(raw) {
@@ -1123,11 +1510,14 @@ function formatRequestJSON(raw) {
   }
   return output.join("") + "\n"
 }
-function downloadInput(index, formatted = false) {
-  const text = formatted ? formatRequestJSON(requestCache[index]) : requestCache[index]
+async function downloadInput(index, formatted = false) {
+  let text
+  const mode = exportScopes[index] ?? "request"
+  try { text = mode === "call" ? JSON.stringify(await fetchCallRecord(index), null, formatted ? 2 : 0) : formatted ? formatRequestJSON(requestCache[index]) : requestCache[index] }
+  catch (err) { addError("下载失败：" + String(err)); return }
   const blob = new Blob([text], { type: "application/json;charset=utf-8" })
   const link = document.createElement("a")
-  link.href = URL.createObjectURL(blob); link.download = `model-request-${index}${formatted ? "" : ".raw"}.json`; link.click()
+  link.href = URL.createObjectURL(blob); link.download = mode === "call" ? `model-call-${index}.json` : `model-request-${index}${formatted ? "" : ".raw"}.json`; link.click()
   URL.revokeObjectURL(link.href)
 }
 function setMarkdown(body, text) {
@@ -1256,6 +1646,76 @@ permModal.querySelectorAll("button[data-reply]").forEach(btn => btn.onclick = as
   }
 })
 
+/* question 是用户问答，独立于权限审批。队列保留并发子会话提问。 */
+const questionQueue = new Map(), questionDrafts = new Map()
+let activeQuestion = null
+function showQuestion(request) {
+  if (!request?.id || !Array.isArray(request.questions)) return
+  questionQueue.set(request.id, request)
+  renderQuestion()
+}
+function renderQuestion() {
+  const modal = document.getElementById("questionModal")
+  activeQuestion = harness === "opencode" ? questionQueue.values().next().value ?? null : null
+  modal.classList.toggle("show", !!activeQuestion)
+  if (!activeQuestion) return
+  let drafts = questionDrafts.get(activeQuestion.id)
+  if (!drafts) { drafts = activeQuestion.questions.map(() => ({ selected: [], custom: "" })); questionDrafts.set(activeQuestion.id, drafts) }
+  document.getElementById("questionBody").innerHTML = activeQuestion.questions.map((q, n) => `<fieldset><legend>${escapeHtml(q.header ?? "问题 " + (n + 1))}</legend><p>${escapeHtml(q.question)}</p>${(q.options ?? []).map((o, i) => `<label><input type="${q.multiple ? "checkbox" : "radio"}" name="question-${n}" onchange="chooseQuestion(${n},${i},this.checked)"${drafts[n].selected.includes(i) ? " checked" : ""}><span><b>${escapeHtml(o.label)}</b><small>${escapeHtml(o.description ?? "")}</small></span></label>`).join("")}${q.custom !== false ? `<input id="question-custom-${n}" type="text" aria-label="自定义答案" placeholder="${q.multiple ? "可补充自己的答案" : "填写自己的答案（替代单选项）"}" value="${escapeHtml(drafts[n].custom)}" oninput="questionDrafts.get(activeQuestion.id)[${n}].custom=this.value">` : ""}</fieldset>`).join("")
+  document.getElementById("questionError").textContent = ""
+  document.getElementById("questionSubmit").disabled = false
+  document.getElementById("questionReject").disabled = false
+}
+function chooseQuestion(n, option, checked) {
+  if (!activeQuestion) return
+  const draft = questionDrafts.get(activeQuestion.id)[n], q = activeQuestion.questions[n]
+  draft.selected = q.multiple ? [...new Set(checked ? [...draft.selected, option] : draft.selected.filter(i => i !== option))] : checked ? [option] : []
+  if (!q.multiple) { draft.custom = ""; const input = document.getElementById("question-custom-" + n); if (input) input.value = "" }
+}
+function collectQuestionAnswers(request, drafts) {
+  return request.questions.map((q, n) => {
+    const draft = drafts[n], custom = q.custom !== false ? draft.custom.trim() : ""
+    const selected = draft.selected.map(i => q.options[i]?.label).filter(v => typeof v === "string")
+    return custom && !q.multiple ? [custom] : [...selected, ...(custom ? [custom] : [])]
+  })
+}
+async function submitQuestion(action) {
+  if (!activeQuestion) return
+  const request = activeQuestion, targetRun = currentRunID
+  const answers = collectQuestionAnswers(request, questionDrafts.get(request.id))
+  if (action === "reply" && answers.some(a => !a.length)) { document.getElementById("questionError").textContent = "请回答每个问题，或选择跳过。"; return }
+  document.getElementById("questionSubmit").disabled = true
+  document.getElementById("questionReject").disabled = true
+  try {
+    const response = await fetch("/api/question", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestID: request.id, action, ...(action === "reply" ? { answers } : {}) }) })
+    const data = await response.json()
+    if (!response.ok || !data.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
+    if (harness !== "opencode" || currentRunID !== targetRun) return
+    questionQueue.delete(request.id); questionDrafts.delete(request.id)
+    addRecord("tool", "本地问题答复已接受", "实际继续/工具终态以原生事件为准。", "json", { requestID: request.id, action, answers })
+    renderQuestion()
+  } catch (err) {
+    if (activeQuestion?.id === request.id && harness === "opencode" && currentRunID === targetRun) {
+      document.getElementById("questionError").textContent = "提交失败：" + String(err)
+      document.getElementById("questionSubmit").disabled = false
+      document.getElementById("questionReject").disabled = false
+    }
+  }
+}
+document.getElementById("questionSubmit").onclick = () => submitQuestion("reply")
+document.getElementById("questionReject").onclick = () => submitQuestion("reject")
+async function refreshQuestions() {
+  if (harness !== "opencode") return
+  const run = currentRunID
+  try {
+    const response = await fetch("/api/questions", { cache: "no-store" })
+    if (!response.ok) return
+    const data = await response.json()
+    if (harness !== "opencode" || currentRunID !== run) return
+    for (const question of data.questions ?? []) showQuestion(question)
+  } catch {}
+}
+
 /* ═══════════ 事件处理（含节点归档） ═══════════ */
 const runBadge = document.getElementById("runBadge")
 let runState = "idle"
@@ -1306,7 +1766,10 @@ function handleEvent(evt) {
     if (evt.runID && currentRunID && evt.runID !== currentRunID && evt.type !== "viz.connected") return
     const p = evt.properties ?? {}
     if (evt.type === "viz.run") {
+      currentConversationTurn = p.turnNumber ?? 1
       if (p.sessionID) currentSession = rootByHarness[evt.harness ?? harness] = p.sessionID
+      lastFinishInfo = null
+      terminalSessions.delete(currentSession); sessionErrors.delete(currentSession)
       setRun("busy")
       processEvent(evt); flushSessionEvents(); return
     }
@@ -1329,8 +1792,8 @@ function handleEvent(evt) {
 
 function captureLlmEvent(evt) {
   const p = evt.properties ?? {}, codex = evt.harness === "codex"
-  const node = codex ? "c-llm" : "llm"
   const child = codex ? !!p.sessionID && codexThreadParents.has(p.sessionID) : isChild(p)
+  const node = codex ? "c-llm" : child ? "sub" : "llm"
   const scope = child ? "子会话" : p.sessionID && currentSession && p.sessionID !== currentSession ? "未关联会话" : "主会话"
   llmRevision++
   if (evt.type === "llm.request") {
@@ -1374,8 +1837,9 @@ function processEvent(evt) {
   }
   if (type === "viz.run") {
     addUser(p.prompt ?? "")
-    addRecord(harness === "codex" ? "c-ui" : "ui", "提交提示词",
-      harness === "codex" ? "POST /api/run → spawn codex exec --json（实际启动配置见直接事件）" : "POST /api/run → 建会话 + 发消息（发后即忘）",
+    addRecord(harness === "codex" ? "c-ui" : "ui", p.continuing ? `继续对话 · 第 ${p.turnNumber ?? "?"} 轮` : "提交提示词",
+      harness === "codex" ? p.continuing ? "向原生 codex exec resume 传入当前线程 ID；保留之前记录。" : "POST /api/run → spawn codex exec --json（实际启动配置见直接事件）"
+        : p.continuing ? "向当前原生会话追加用户消息；保留之前记录。" : "POST /api/run → 建会话 + 发消息（发后即忘）",
       "json", p)
     if (p.sessionID) { currentSession = p.sessionID; document.getElementById("sessionLabel").textContent = "会话 " + p.sessionID.slice(-8) }
     return
@@ -1518,6 +1982,15 @@ function processEvent(evt) {
       pulse("sandbox", 60000); bump("sandbox")
       addRecord("sandbox", `${child ? "子会话 · " : ""}询问: ${p.permission}`, `匹配 ${escapeHtml((p.patterns || []).join(", "))} · 等待 reply；不表示所有工具统一经过审批`, "json", p)
       showPerm(p); log(type, `权限询问 ${p.permission}`, "perm"); break
+    case "question.asked":
+      showQuestion(p)
+      addRecord(child ? "sub" : "tool", "工具向用户提问", "结构化用户交互，不是权限审批。", "json", p)
+      break
+    case "question.replied":
+    case "question.rejected":
+      questionQueue.delete(p.requestID); questionDrafts.delete(p.requestID); renderQuestion()
+      addRecord(child ? "sub" : "tool", type === "question.replied" ? "用户答复问题" : "用户跳过问题", "原生问题事件；不单独证明整个任务完成。", "json", p)
+      break
     case "permission.replied":
       pulse("sandbox")
       addRecord("sandbox", `权限答复: ${p.reply}`, `requestID=${p.requestID} · sessionID=${p.sessionID}`, "json", p)
@@ -1538,8 +2011,9 @@ function processEvent(evt) {
 /* codex exec items / 生命周期事件；采样捕获单独归档为 API 边界。 */
 function codexItem(item, done) {
   if (!item) return
-  const key = item.id ?? item.call_id ?? currentEvent?.id
-  if (key == null) { addRecord("c-tool", "无标识 item（不合并）", "无法按调用身份去重。", "json", item); return }
+  const identity = item.id ?? item.call_id ?? currentEvent?.id
+  if (identity == null) { addRecord("c-tool", "无标识 item（不合并）", "无法按调用身份去重。", "json", item); return }
+  const turn = currentEvent?.conversationTurn ?? 1, key = turn > 1 ? `${turn}:${identity}` : identity
   const previous = codexItems.get(key)
   if (previous?.done && !done) return
   if (previous?.done === done && jsonText(previous.item) === jsonText(item)) return
@@ -1558,7 +2032,7 @@ function codexItem(item, done) {
   if (!previous) {
     if (toolItem) bump(node)
     addRecord(node, labels[item.type] ?? item.type, "原始活动报告；状态与完整内容保留在详情。", "json", item)
-  } else updateRec(node, r => (r.data?.id ?? r.data?.call_id) === key, item)
+  } else updateRec(node, r => (r.data?.id ?? r.data?.call_id) === identity && (r.event?.conversationTurn ?? 1) === turn, item)
   if (done && toolItem && !previous?.done)
     addRecord("c-feedback", `${labels[item.type] ?? item.type}返回结果`, "返回结果或状态，用于后续处理。", "json", item)
   let b = toolCards["cx-" + key]
@@ -1618,7 +2092,7 @@ function handleCodexEvent(evt) {
       currentSession = rootByHarness.codex = p.thread_id
       document.getElementById("sessionLabel").textContent = "线程 " + String(p.thread_id).slice(-8)
       pulse("c-server")
-      addRecord("c-server", "线程启动 " + p.thread_id,
+      addRecord("c-server", (evt.conversationTurn > 1 ? "恢复线程 " : "线程启动 ") + p.thread_id,
         "直接 thread.started 事件；源码路径 exec run_main → RegularTask → run_turn，非函数调用观测。", "json", p)
       log(type, "thread " + p.thread_id, "ok"); break
     case "codex.turn.started":
@@ -1703,7 +2177,7 @@ opencode: {
   sub: ocDoc(LESSONS.child, [["tool/task.ts", "child session / child prompt", "136-224"], ["tool/task.ts", "background and result", "284-358"]], "显式子任务与模型 task 工具共享 TaskTool。子会话关联依靠 parentID 或 task metadata；后台启动回传状态不代表子任务已全部完成。"),
   sandbox: ocDoc({ what: "权限既会过滤可用工具，也在具体工具需要时检查。自动允许、拒绝和询问用户是不同结果，没有所有工具统一经过的审批门。工具按本地或外部服务边界执行。", example: "读取或编辑工具在相应动作前检查权限；需要确认时页面弹出询问并保存答复。", next: "工具按自身规则执行或返回拒绝信息。拒绝后继续还是停止，还取决于循环配置。" }, [["session/tools.ts", "tool-specific ask / dispatch", "81-132"], ["permission/index.ts", "ask and reply", "67-166"], ["tool/edit.ts", "ask before action", "102-111"], ["session/processor.ts", "continue_loop_on_deny", "190-204"]], "区域不是控制步骤。Asked/Replied 为直接事件，按询问计数；API 接受本地答复不证明工具恢复。独立 opencode serve 不等于完整 OS 沙箱，外部 MCP 边界由服务自身提供。continue_loop_on_deny 决定拒绝是否阻断处理。"),
   outcome: ocDoc({ what: "模型和工具处理返回后，区分继续、安排压缩或结束。它与下一轮入口的“请求已完成”检查不同。", example: "工具结果需要模型解释时继续；处理器发现输入过长时安排压缩；终止结果则结束。", next: "继续回到历史读取；需压缩先创建标记再回循环头；结束退出会话处理。" }, [["session/processor.ts", "compact / stop / continue", "693-695"], ["session/prompt.ts", "structured output and processor outcomes", "1288-1335"]], "包括结构化输出成功/缺失的 break、processor stop、compact create 及普通 continue。continue 不代表下一轮一定调用模型，入口退出谓词会再检查。未观测内部返回值时不填造分支记录。"),
-  done: ocDoc(LESSONS.end, [["session/prompt.ts", "termination and prune", "1288-1339"], ["session/run-state.ts", "onIdle", "52-68"], ["session/status.ts", "idle events", "39-47"]], "idle 表示不再忙；界面保留失败/中断状态。任务是否正确还要依据测试和检查结果。"),
+   done: ocDoc({ ...LESSONS.end, what: "本次会话处理退出，返回结果或保留错误、中断信息。运行器随后发布空闲状态；函数返回与转为空闲是两个相邻阶段。" }, [["session/prompt.ts", "termination and prune", "1288-1339"], ["session/run-state.ts", "onIdle", "52-68"], ["session/status.ts", "idle events", "39-47"]], "普通文本路径通常由 processor continue 回到循环头，再以 latestUser/assistant/tool 条件退出。idle 表示不再忙，不单独证明成功；界面保留失败/中断状态。"),
 },
 codex: {
   "c-ui": cxDoc(LESSONS.start, [["exec/src/lib.rs", "run_main", "259"]]),
@@ -1747,6 +2221,7 @@ function connect() {
 /* 清空界面状态（运行新任务 / 切换 harness 共用） */
 function resetUI() {
   execution.clear(); executionSelectedKey = null; clearTimeout(executionTimer)
+  relationshipPackets.clear(); mechanismFocus = null
   outputReferences.clear()
   followTranscript = true
   transcript.innerHTML = ""
@@ -1758,14 +2233,16 @@ function resetUI() {
   seenAssistantMsgs.clear()
   for (const collection of [sessionParents, pendingDeltas, messageRoles, pendingMessageText, codexThreadParents, codexToolNodes, toolStates, codexItems, terminalSessions, sessionErrors, assistantSnapshots, seenPartMarkers, seenLlmRequests, seenEventIDs, openRecords]) collection.clear()
   pendingSessionEvents.length = 0
-  loggedEvents = new WeakSet(); currentEvent = null; currentRunID = null; llmRevision++
+  loggedEvents = new WeakSet(); currentEvent = null; currentRunID = null; currentConversationTurn = 0; llmRevision++
   pendingPerm = null; permModal.classList.remove("show")
+  questionQueue.clear(); questionDrafts.clear(); activeQuestion = null; document.getElementById("questionModal").classList.remove("show")
+  Object.keys(exportScopes).forEach(k => delete exportScopes[k]); Object.keys(previewPreferences).forEach(k => delete previewPreferences[k])
   Object.values(activeTimers).forEach(clearTimeout)
   lastFinishInfo = null
   Object.keys(requestCache).forEach(k => delete requestCache[k])
   llmCallCount = 0; llmBadge.textContent = "捕获请求: 0"
   document.querySelectorAll(".cnt").forEach(c => { c.style.display = "none"; c.textContent = "0" })
-  document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(e => { e.classList.remove("unread", "active", "observed", "step-focus") })
+  document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(e => { e.classList.remove("unread", "active", "observed", "step-focus", "mechanism-node", "mechanism-focus") })
   currentSession = null
   document.getElementById("sessionLabel").textContent = ""
   setRun("idle")
@@ -1779,8 +2256,8 @@ function switchHarness(h) {
   document.querySelectorAll(".hbtn").forEach(b => b.classList.toggle("on", b.dataset.h === h))
   document.getElementById("flowOpencode").style.display = h === "opencode" ? "" : "none"
   document.getElementById("flowCodex").style.display = h === "codex" ? "" : "none"
-  document.getElementById("modelSel").style.display = h === "codex" ? "none" : ""
-  document.getElementById("codexModelBadge").style.display = h === "codex" ? "" : "none"
+  document.getElementById("modelSel").style.display = ""
+  document.getElementById("codexModelBadge").style.display = "none"
   document.getElementById("prompt").placeholder = "输入任务，Enter 运行"
   resetUI()
   currentSession = rootByHarness[h]
@@ -1788,20 +2265,28 @@ function switchHarness(h) {
   for (const evt of eventsByHarness[h]) handleEvent(evt)
   selectNode(h === "codex" ? "c-llm" : "llm")
   updateModelInfo()
+  refreshQuestions()
+  if (modelMenus[h]) paintModelMenu(); else { paintEffortMenu(); loadModels(h) }
 }
 document.querySelectorAll(".hbtn").forEach(b => b.onclick = () => switchHarness(b.dataset.h))
 
 async function run() {
   const prompt = document.getElementById("prompt").value.trim()
-  if (!prompt || runState === "busy" || !cliAvailable()) return
+  if (!prompt || runState === "busy" || Object.values(statusSnapshot.conversations ?? {}).some(item => item.active) || !cliAvailable()) return
   const target = harness
-  resetUI()
+  const continueSessionID = continueChoices[target] ? currentSession ?? rootByHarness[target] : null
+  const previousState = runState, previousTurn = currentConversationTurn
+  if (!continueSessionID) {
+    resetUI()
+    eventsByHarness[target] = []; rootByHarness[target] = null
+  }
   setRun("busy")
-  eventsByHarness[target] = []; rootByHarness[target] = null
   renderPanel()
   try {
     const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, harness: target, model: document.getElementById("modelSel").value || undefined }) })
+      body: JSON.stringify({ prompt, harness: target, model: document.getElementById("modelSel").value || undefined,
+        ...(continueSessionID ? { continueSessionID } : {}),
+        ...(document.getElementById("effortSel").value ? { [target === "opencode" ? "variant" : "reasoningEffort"]: document.getElementById("effortSel").value } : {}) }) })
     const data = await res.json()
     if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`)
     if (data.sessionID) rootByHarness[target] = data.sessionID
@@ -1811,15 +2296,13 @@ async function run() {
       document.getElementById("sessionLabel").textContent = "会话 " + data.sessionID.slice(-8)
       flushSessionEvents()
     }
-  } catch (err) { if (harness === target) { addError(String(err)); setRun("failed") } }
+  } catch (err) { if (harness === target) { addError(String(err)); setRun(continueSessionID && currentConversationTurn === previousTurn ? previousState : "failed") } }
 }
 
 document.getElementById("runBtn").onclick = run
 document.getElementById("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); run() } })
 document.getElementById("demoBtn").onclick = () => {
-  document.getElementById("prompt").value = harness === "codex"
-    ? "请列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome，最后告诉我改了什么。"
-    : "请先用 glob 列出 src/ 目录下的所有文件，然后阅读 README.md，把里面的错别字 Welcom 改成 Welcome。"
+  document.getElementById("prompt").value = "请先用 glob 列出 src/ 目录下的所有文件，然后阅读 README.md，介绍这个项目。"
 }
 document.getElementById("abortBtn").onclick = async () => {
   const target = harness
@@ -1910,14 +2393,7 @@ async function init() {
   connect() // Buffer live events before loading snapshots, avoiding a replay/subscription gap.
   await pollStatus()
   const status = statusSnapshot
-  const { models } = await (await fetch("/api/models")).json()
-  const sel = document.getElementById("modelSel")
-  for (const m of models) {
-    const o = document.createElement("option"); o.value = m.value; o.textContent = m.label
-    if (m.value === status.ocModel) o.selected = true
-    sel.appendChild(o)
-  }
-  sel.onchange = updateModelInfo
+  await Promise.all([loadModels("opencode"), loadModels("codex")])
   /* 刷新恢复：回放服务端内存里的上次运行事件（重启 server 后即为空） */
   try {
     const last = await (await fetch("/api/last-run?harness=opencode")).json()

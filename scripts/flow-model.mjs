@@ -82,5 +82,11 @@ export function validateFlowGraph(graph, size) {
     for (const e of outgoing.get(id) ?? []) queue.push(e.to)
   }
   assert(controls.every(n => reachable.has(n.id)), "all control-flow nodes must be reachable")
-  return { nodes: graph.nodes.length, edges: graph.edges.length, decisions: controls.filter(n => n.shape === "decision").length }
+  for (const [name, route] of Object.entries(graph.mechanisms ?? {})) {
+    assert(route.condition && route.nodes.length >= 2, `${name}: mechanism needs explicit conditions and a route`)
+    assert(route.nodes.every(id => nodes.has(id)), `${name}: mechanism node missing`)
+    for (let n = 1; n < route.nodes.length; n++) assert(graph.edges.some(e => e.from === route.nodes[n - 1] && e.to === route.nodes[n]),
+      `${name}: mechanism must follow existing diagram edges (${route.nodes[n - 1]}->${route.nodes[n]})`)
+  }
+  return { nodes: graph.nodes.length, edges: graph.edges.length, decisions: controls.filter(n => n.shape === "decision").length, mechanisms: Object.keys(graph.mechanisms ?? {}).length }
 }

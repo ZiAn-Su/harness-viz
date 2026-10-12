@@ -1,13 +1,10 @@
 {
   "projectPath": "examples/demo",
-  "upstream": "https://api.minimaxi.com",
-  "upstreamEnvKey": "MINIMAX_API_KEY",
-  "codex": {
-    "useDefaultModel": true,
-    "model": "gpt-6.1-sol"
+  "extensions": {
+    "enabled": true,
+    "skills": ["frontend-design", "mcp-builder"],
+    "mcp": ["context7"],
+    "opencodePlugins": ["dcp"]
   },
-  "opencode": {
-    "model": "MiniMax-M3.1-Flash-Preview",
-    "limit": { "context": 1000000, "output": 524288 }
-  }
+  "tools": { "question": true, "websearch": "exa" }
 }

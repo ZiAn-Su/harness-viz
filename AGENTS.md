@@ -1,6 +1,6 @@
 # 维护约定
 
-- `src/` 是后端，`public/` 是网页，`config/settings.json` 是用户配置；不要重新把配置放进运行目录。
+- `src/` 是后端，`public/` 是网页，`config/settings.json` 只保留项目、观测扩展及工具开关。模型/provider/URL/密钥/profile使用OpenCode/Codex原生配置，不在观察器中维护或伪造默认模型；私有快照和传输覆盖不能改写原件。
 - `examples/demo/` 是默认工作目录，演示会直接读取、修改其中的文件，不复制工作目录。
 - `.runtime/` 保存专用 CLI 缓存、认证、日志、trace、测试输出；全部忽略，不提交。测试代码放 `tests/`，验证脚本放 `scripts/`。
 - 统一用 `npm start` 启动；工作目录在 `config/settings.json` 的 `projectPath` 中设置，默认 `examples/demo`，不增加自定义启动参数。`npm test` 不调用模型；`npm run test:integration` 会调用真实模型并产生费用。
@@ -8,9 +8,13 @@
 - 后端/配置改动需重启；网页每次请求读取。PowerShell 5.1 不支持 `&&`，不要用输出重定向占住常驻进程的父 shell。
 - 网页入口默认 `127.0.0.1:4577`；内部代理与 OpenCode 使用自动端口，生成的 provider 地址必须使用实际监听端口。OpenCode 地址只从自身固定版本进程的完整 stdout 公告读取，再带随机认证核验健康版本；不探测／复用别人的服务。启动验证须覆盖被占用端口及默认端口分配，不能只在验证脚本里换端口掩盖应用缺陷。
 - CLI 按 `src/versions.json` 自动安装到 `.runtime/cli/<harness>/<version>/` 并缓存复用，不从全局 PATH 或旧 `CODEX_CLI_*` 覆盖选择 agent；探测与执行必须同一入口且严格核验版本。专用 OpenCode 关闭自动更新。网页先启动，准备状态与错误按 CLI 隔离；未就绪入口不得清空历史或启动任务。前端 `SOURCE_PINS` 与版本锚点保持一致，不修改上游源码迁就观察器。验证数据目录与 CLI 缓存分离；`VIZ_CLI_DIR` 仅用于开发隔离缓存。
-- 默认 Codex 为官方 `gpt-6.1-sol` + 原生 trace；第三方和 OpenCode 使用 `MiniMax-M3.1-Flash-Preview`。Preview 限制来自 [官方 Messages API](https://platform.minimax.io/docs/api-reference/text-chat-anthropic.md)，不得沿用 M3 价格或伪造价格。
+- 少量扩展在 `config/settings.json.extensions` 选择，资源安装到 `.runtime/extensions/`，来源／提交／技能文件 Git blob 哈希／npm 版本在 `src/extensions-lock.json` 锁定。显式 skills.paths 保持 OpenCode 外部技能自动扫描关闭；Codex 只覆盖自己带标记的专用技能目录，保留内置和用户文件。DCP 仅 OpenCode，默认无自动清理、更新和低负载提醒，compress 要确认。扩展变更需重启；配置快照不等于已使用，技能目录不等于正文，字段命中也不单独证明读取来源。原始请求不加入分析元数据；扩展配置／原生发现／实际输入线索分开。
+- OpenCode通过原生模型目录和配置发现provider，观察器插件仅旁路SDK传输；Anthropic/OpenAI Responses/Chat原协议、URL及请求体保留，不按模型强制转译。Codex原生config/read与model/list发现模型/profile，运行使用原生trace。下拉框按harness分开，不展示未配置的假模型。原生权限仍有效。Ark Coding Plan使用官方coding端点；能力窗口和模板来源须核对官方版本，不伪造价格或服务端模板。
+- 思考强度仅用一个简洁选择框，短中文档位；按原生支持显示，无档位或只有none/thinking开关时隐藏。OpenCode读取可用强度variant名称，向原生消息body顶层传名称；Codex从原生model/list读取supportedReasoningEfforts，通过原生-c model_reasoning_effort传本次选择，不改用户配置。默认不覆盖原生选项，未知档位在清历史/准入前拒绝。演示项目Kimi Code两模型显式high及low/high/max原生变体；HTTP字段和公开K3编码器片段分别核验，不把API参数当客户端system正文或服务端token输入。
+- 任务结束后可勾选「继续当前对话」，默认关闭且按harness独立。仅允许续接当前服务已关联、已结束的原生session/thread；OpenCode追加消息，Codex exec resume使用明确线程ID，禁止--last或手工拼旧提示词。续聊保留原请求、事件、转写和观察runID；turnNumber/conversationTurn仅是本地用户输入轮次。每轮独立active对象与Codex trace目录，防止晚到回调解锁新轮或重新读取旧trace；Codex exec局部item ID按轮次隔离，原ID/报文不改写。新会话仍清当前记录；无效续聊在准入/清历史前拒绝，刷新复选框默认关闭。
 - 原始请求、响应与事件必须保留来源；区分直接观测、边界捕获和推断。不用请求数、消息数或 turn 数冒充内部迭代数。
-- 运行过程默认显示执行顺序，按 receivedAt 排列去重的关键事件；工具开始与终态分开保留，不能用最新快照覆盖先前顺序。父子会话依明确关联分类。持久节点标记只表示相关证据，未记录的判断不填造分支。读取历史展示实际请求中的可读材料，须标注内部数据库读取未跟踪；模型响应同时容纳文字与工具调用，工具执行证据按调用 ID 关联。API 原报文与观察器精简通知分层保留。`test:browser -- --live-opencode` 只读捕获并离线回放当前记录，不重启用户实例或提交模型任务。
+- 采集事件按 receivedAt 排列并去重；工具开始与终态分开保留，不能用最新快照覆盖先前顺序。父子会话依明确关联分类。持久节点标记只表示相关证据，未记录的判断不填造分支。读取历史展示实际请求中的可读材料，须标注内部数据库读取未跟踪；模型响应同时容纳文字与工具调用，工具执行证据按调用 ID 关联。API 原报文与观察器精简通知分层保留。`test:browser -- --live-opencode` 只读捕获并离线回放当前记录，不重启用户实例或提交模型任务。
+- 调用全流程默认展开紫色源码阶段，阶段不得冒充采集事件、不得带伪造时间戳或计入原始事件数。机制路径在 `public/flows.js` 同源定义，必须逐段复用现有图边，禁止最短路径猜测或新增“运行准备→模型”捷径。请求/响应按编号与会话关联，工具/后续输入按实际调用 ID 关联，不靠全局相邻顺序或名称推断。OpenCode 子会话模型记录归「管理子任务」，子阶段只定位该收起子流程，不高亮为父会话主线。处理退出与运行器 idle 分开解释。
 - 工具可在流期间执行；OpenCode compaction 标记不代表完成，task 工具不等于 preflight SubtaskPart，idle 不代表成功。reasoning/text delta 按 part 类型分类。
 - Codex 续接可只含增量 input；工具定义可在 `additional_tools`。缺失不表示零工具；stop hooks 可续行，完成事件不反推分支。
 - 不恢复宽泛 PowerShell allow 规则。隔离目录不是完整安全沙箱；Codex 原生模式复制用户认证，但不修改源认证/config。
@@ -21,6 +25,7 @@
 - 仅顶部工具栏固定显示；面板开关只改变视图，不清空任务或事件。输入框保持单行，不自动增高。
 - Markdown 使用本地 `public/vendor` 中的 Marked / DOMPurify；不要把模型输出直接写入 innerHTML。更新依赖用 `node scripts/vendor-markdown.mjs` 并保留许可证。
 - 模型输入重建只关联同一 run / thread 的 previous_response_id 请求链，原始载荷不修改。缺少前序响应标为不完整，不从时间顺序猜补；转译模式优先展示实际发给上游的输入。
-- 请求下载保留捕获的原始文本，不下载分析对象；代理模式必须与转发 body 一致，转译模式必须与上游 body 一致。原生 trace 的记录边界单独标明，不能称为服务端最终 prompt 或全部网络报文。
+- 请求范围下载保留原始文本，代理模式必须与转发body一致，旧转译记录与上游body一致。新增调用范围下载是明确标注的分析封装，包含request.raw、response.raw/parsed及按run/session/call ID关联的工具事件，不修改原请求。模板请求版保留生成起点，含响应版追加本次已观测响应/关联反馈，不补造缺失数据；完整版本刷新不能复用过时响应缓存。原生trace不冒充网络抓包。
 - 模板预览（`src/template-preview.mjs`）用固定版本的公开模板本地离线渲染捕获的请求 JSON，不是服务端实际 prompt，不含 token IDs；模板文件 vendored 在 `src/templates/`（来源 URL+revision+sha256 锁定，加载时校验哈希，不联网），渲染引擎是 vendored `@huggingface/jinja`（`src/vendor/jinja/`，更新时保留 LICENSE）。Kimi K3 无独立 Jinja 模板，其 XTML 拼接是官方 `encoding_k3.py` 的等价移植；默认界面仅保留操作与渲染文本，来源、版本和去重的实际转换记录放在折叠的「渲染详情」中。已捕获的 Responses 请求内容是已知的，不能与不可见的服务端内部编码混淆。渲染基准在 `tests/fixtures/template-preview/`（由固定上游模板经 Python 生成，provenance 见其 meta.json），改动渲染逻辑必须重跑 golden 测试。
+- 模板思考参数以该次实际请求为准，含响应版也保留同一参数；Jinja必须传入显式reasoning_effort。Qwen固定公开模板只接受low/medium/xhigh，GLM接受low/high/max；不支持值报错，禁止静默回落默认或编造跨模型档位映射。缺省采用公开模板默认时在渲染详情标来源。渲染失败清除当前下载引用并禁用复制/下载；晚到的其他模板错误不能覆盖当前已选模板。
 - 格式化 JSON 下载只调整空白，保留数字字面量、转义和字段顺序；原文下载不格式化。OpenCode 转写必须按 messageID 对应角色分流，不把 user part 再显示为助手，不用文本相同过滤真实助手输出。

@@ -6,6 +6,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 // @huggingface/jinja 0.5.10; MIT license retained in ./vendor/jinja/LICENSE.
 import { Template } from "./vendor/jinja/index.js"
+import { buildCallRecord } from "./call-record.mjs"
 
 const TEMPLATE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "templates")
 
@@ -32,6 +33,17 @@ export const TEMPLATE_REGISTRY = [
     revision: "aca966e4e02791568aa6a4ced368624b3d897f42",
     sha256: "3740abcea51c45830cb3ca562084ad5fb2ef53589376f73332e9886f93ade41c",
     note: "",
+  },
+  {
+    id: "glm53-flash",
+    label: "GLM5.3-Flash",
+    model: "zai-org/GLM-5.3-Flash",
+    engine: "jinja",
+    file: "glm53-flash.chat_template.jinja",
+    sourceUrl: "https://huggingface.co/zai-org/GLM-5.3-Flash/raw/eb9eb208eb0d988989d07a6a12d0fdeb5f52574a/chat_template.jinja",
+    revision: "eb9eb208eb0d988989d07a6a12d0fdeb5f52574a",
+    sha256: "0c4099f3382d6c92700dfb99725025360966fd73032f0ecf32377c0d9e6309c5",
+    note: "Flash 独立公开模板，包含多模态标记；占位文本不等于图像/视频嵌入或 Ark 服务端模板。",
   },
   {
     id: "kimi-k3",
@@ -280,7 +292,7 @@ const internalSystem = (type, body) =>
 function renderAssistantKimi(message, thinking) {
   let out = ""
   if (thinking) {
-    const reasoning = message.reasoning_content ?? message.reasoning
+    const reasoning = message.reasoning_content || message.reasoning
     out += openTag("think")
     if (reasoning != null && String(reasoning) !== "") out += String(reasoning)
     out += closeTag("think")
@@ -314,6 +326,7 @@ function renderToolDeclare(tools, dynamic = false) {
 
 export function renderKimiXtml({ messages, tools = null, addGenerationPrompt = true, thinking = true,
   thinkingEffort = null, toolChoice = null, responseFormat = null, responseSchema = null }) {
+  responseSchema = deepSortDict(responseSchema)
   let msgs = normalizeXtmlToolResultMessages(messages).map(normalizeKimiMessage)
   const sortedTools = deepSortDict(tools)
   let out = ""
@@ -457,7 +470,7 @@ export function responsesToChat(input) {
         messages.push(chat)
       } else { flushReasoning(); messages.push({ role, content: text }) }
     } else if (item.type === "reasoning") {
-      const summary = (item.summary ?? []).map(block => block.text ?? "").filter(Boolean).join("\n")
+      const summary = [...(item.summary ?? []), ...(item.content ?? []).filter(block => ["reasoning_text", "text"].includes(block.type))].map(block => block.text ?? "").filter(Boolean).join("\n")
       if (summary) pendingReasoning.push(summary)
       else if (item.encrypted_content) warnings.push("reasoning 为加密内容（encrypted_content），无法还原，已省略")
     } else if (item.type === "function_call" || item.type === "custom_tool_call") {
@@ -492,15 +505,100 @@ export function responsesToChat(input) {
   return { messages, tools: tools.length ? tools : null, warnings: [...new Set(warnings)] }
 }
 
+export function chatToChat(input) {
+  const warnings = [], messages = []
+  for (const item of input.messages ?? []) {
+    const message = { ...item }
+    if (message.role === "developer") { message.role = "system"; warnings.push("Chat developer 已映射为 system。") }
+    if (message.role === "system" && messages.length && messages.every(m => m.role === "system")) { messages[0].content += "\n\n" + (message.content ?? ""); continue }
+    if (message.role === "system" && messages.length) { message.role = "user"; warnings.push("Chat 后续 system 已映射为 user。") }
+    if (message.tool_calls) message.tool_calls = message.tool_calls.map(tool => {
+      const parsed = normalizeCallArguments(tool.function?.arguments ?? "{}", warnings)
+      return { ...tool, function: { ...tool.function, arguments: parsed.arguments, arguments_raw: parsed.argumentsRaw } }
+    })
+    messages.push(message)
+  }
+  return { messages, tools: input.tools ?? null, warnings }
+}
+
 /* ───────────── 顶层：对一次捕获调用渲染模板预览 ───────────── */
-export async function renderTemplatePreview({ modelInput, templateId }) {
+function requestReasoningEffort(request) {
+  for (const [field, value] of [["reasoning_effort", request?.reasoning_effort], ["reasoning.effort", request?.reasoning?.effort],
+    ["output_config.effort", request?.output_config?.effort], ["thinking_effort", request?.thinking_effort],
+    ["chat_template_kwargs.reasoning_effort", request?.chat_template_kwargs?.reasoning_effort]]) {
+    if (value != null) return { field, value }
+  }
+  return null
+}
+
+function jinjaApiOptions(entry, request, warnings) {
+  const captured = requestReasoningEffort(request)
+  const supported = entry.id === "qwen38" ? ["low", "medium", "xhigh"] : ["low", "high", "max"]
+  const defaultEffort = entry.id === "qwen38" ? "xhigh" : "max"
+  if (captured && !supported.includes(captured.value)) {
+    throw new Error(`${entry.label} 公开模板不支持原请求 ${captured.field}=${JSON.stringify(captured.value)}；支持 ${supported.join(" / ")}。未自动替换为 ${defaultEffort}，请使用兼容模板。`)
+  }
+  if (entry.id === "qwen38" && (request?.thinking?.type === "disabled" || request?.enable_thinking === false || request?.chat_template_kwargs?.enable_thinking === false)) {
+    throw new Error("Qwen3.8 公开模板不支持关闭思考，未将原请求改成开启思考。")
+  }
+  if (captured) {
+    warnings.push(`已将原请求 ${captured.field}=${captured.value} 传入 ${entry.label} 公开模板的 reasoning_effort；同名档位不保证跨模型语义等价。`)
+    return { reasoning_effort: captured.value }
+  }
+  warnings.push(`原请求未显式记录思考强度；${entry.label} 预览使用公开模板默认 ${defaultEffort}，不代表实际请求的思考强度。`)
+  return {}
+}
+
+function kimiApiOptions(request, warnings) {
+  const effort = requestReasoningEffort(request)?.value
+  const thinkingEffort = effort == null ? null : VALID_THINKING_EFFORTS.has(effort) ? effort : null
+  if (effort != null && thinkingEffort == null) warnings.push(`原请求思考参数 ${effort} 不在该公开K3编码器的low/high/max范围内，未猜测映射。`)
+  const choice = request?.tool_choice
+  const toolChoice = typeof choice === "string" ? choice : choice?.type === "any" ? "required" : choice?.type
+  if (toolChoice && !["auto", "required", "none"].includes(toolChoice)) warnings.push("原请求选择了特定工具；该公开XTML编码器没有对应控制片段，原JSON仍完整保留。")
+  const responseFormat = request?.response_format ?? request?.text?.format ?? null
+  const responseSchema = request?.response_schema ?? responseFormat?.json_schema?.schema ?? responseFormat?.schema ?? responseFormat?.json_schema ?? null
+  const thinking = request?.thinking?.type !== "disabled"
+  if (!thinking) warnings.push("原请求关闭思考；Kimi Code可能路由到不同模型，此处仅是所选K3编码器的非思考模式预览。")
+  return { thinking, thinkingEffort, toolChoice, responseFormat, responseSchema }
+}
+
+export async function renderTemplatePreview({ modelInput, templateId, mode = "request", call, events = [] }) {
+  if (!["request", "call"].includes(mode)) throw new Error("未知预览范围")
   const entry = TEMPLATE_REGISTRY.find(item => item.id === templateId)
   if (!entry) throw new Error(`未知模板: ${templateId}`)
-  const converted = modelInput.format === "anthropic"
+  const converted = modelInput.format === "chat" ? chatToChat({ messages: modelInput.items, tools: modelInput.tools }) : modelInput.format === "anthropic"
     ? anthropicToChat({ system: modelInput.system, messages: modelInput.items, tools: modelInput.tools })
     : responsesToChat({ instructions: modelInput.system, input: modelInput.items, tools: modelInput.tools })
   const warnings = [...converted.warnings]
+  let responseState = null
+  if (mode === "call") {
+    if (!call?.response) throw new Error("本次响应尚未捕获，请在响应到达后生成含响应版本")
+    const record = buildCallRecord(call, events)
+    responseState = record.response.state
+    if (responseState !== "captured") warnings.push("响应不完整或包含错误：仅展示已捕获部分，不补造未收到的内容。")
+    const output = call.rawResponse?.output_items ?? call.responseData?.output
+    if (modelInput.format === "responses" && output) {
+      const extra = responsesToChat({ input: output })
+      converted.messages.push(...extra.messages)
+      warnings.push(...extra.warnings)
+    } else {
+      const message = { role: "assistant", content: call.response.text ?? "" }
+      if (call.response.thinking) message.reasoning_content = call.response.thinking
+      const tools = call.response.toolUses ?? []
+      if (tools.length) message.tool_calls = tools.map(tool => {
+        const raw = typeof tool.input === "string" ? tool.input : JSON.stringify(tool.input ?? {})
+        const normalized = normalizeCallArguments(raw, warnings)
+        return { id: tool.callID, type: "function", function: { name: tool.name, arguments: normalized.arguments, arguments_raw: normalized.argumentsRaw } }
+      })
+      converted.messages.push(message)
+    }
+    converted.messages.push(...record.toolResults)
+    if (record.missingToolResults.length) warnings.push(`本次调用有 ${record.missingToolResults.length} 项工具反馈未捕获或未建立明确关联；不从后续请求猜补。`)
+    warnings.push("含响应版本是请求＋本次输出／明确关联工具反馈的离线组装，不是当时发给模型的请求。")
+  }
   if (!modelInput.complete) warnings.push("上下文链不完整（缺少前序响应），预览仅基于可见部分。")
+  const request = call?.anthropicRequest ?? call?.request?.request ?? call?.request ?? {}
   let text
   if (entry.engine === "jinja") {
     const template = await loadTemplate(entry)
@@ -509,8 +607,9 @@ export async function renderTemplatePreview({ modelInput, templateId }) {
       ...message,
       tool_calls: message.tool_calls?.map(call => ({ ...call, function: { name: call.function.name, arguments: call.function.arguments } })),
     }))
+    const options = jinjaApiOptions(entry, request, warnings)
     try {
-      text = template.render({ messages, tools: converted.tools, add_generation_prompt: true })
+      text = template.render({ messages, tools: converted.tools, add_generation_prompt: mode === "request", ...options })
     } catch (err) {
       throw new Error(`模板渲染失败（${entry.id}）: ${err.message}`)
     }
@@ -522,15 +621,16 @@ export async function renderTemplatePreview({ modelInput, templateId }) {
         function: { name: call.function.name, arguments: call.function.arguments_raw ?? call.function.arguments },
       })),
     }))
-    text = renderKimiXtml({ messages, tools: converted.tools, addGenerationPrompt: true })
+    text = renderKimiXtml({ messages, tools: converted.tools, addGenerationPrompt: mode === "request", ...kimiApiOptions(request, warnings) })
   }
   return {
     template: listTemplates().find(item => item.id === entry.id),
     sourceFormat: modelInput.format,
     contextKind: modelInput.kind,
     complete: modelInput.complete,
-    warnings,
-    evidence: `使用 ${entry.label} 固定版本模板拼接已捕获请求。`,
+    warnings: [...new Set(warnings)], mode, responseState,
+    evidence: mode === "request" ? `使用 ${entry.label} 固定版本模板拼接已捕获请求（不含本次响应）。`
+      : `使用 ${entry.label} 固定版本模板拼接请求＋本次已捕获响应／关联工具反馈；不是实际请求，响应状态：${responseState}。`,
     chars: text.length,
     text,
   }

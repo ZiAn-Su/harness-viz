@@ -74,26 +74,28 @@ export function withModelInputs(calls) {
   const responses = new Map(), memo = new Map()
   const key = (call, responseID) => JSON.stringify([call.runID ?? null, call.sessionID ?? null, responseID])
   for (const call of calls) {
-    const responseID = call.rawResponse?.response_id ?? call.trace?.terminal?.payload?.response_id
+    const responseID = call.rawResponse?.response_id ?? call.responseData?.id ?? call.trace?.terminal?.payload?.response_id
     if (responseID) responses.set(key(call, responseID), call)
   }
   const resolve = (call, visiting = new Set()) => {
     if (memo.has(call)) return memo.get(call)
     const raw = call.anthropicRequest ?? call.request?.request ?? call.request ?? {}
-    const anthropic = Boolean(call.anthropicRequest) || call.harness === "opencode"
-    const ownItems = anthropic ? raw.messages : raw.input
+    const anthropic = Boolean(call.anthropicRequest) || call.protocol === "anthropic" || call.harness === "opencode" && !call.protocol
+    const chat = call.protocol === "chat"
+    const ownItems = anthropic || chat ? raw.messages : raw.input
     let items = Array.isArray(ownItems) ? ownItems : []
     let complete = Array.isArray(ownItems), kind = call.anthropicRequest ? "translated" : "captured"
     let chain = [call.index], missingResponseID = null
-    const previous = !anthropic ? raw.previous_response_id : null
+    const previous = !anthropic && !chat ? raw.previous_response_id : null
     if (previous) {
       const parent = responses.get(key(call, previous))
-      if (!parent || visiting.has(parent) || parent === call || !Array.isArray(parent.rawResponse?.output_items)) {
+      const output = parent?.rawResponse?.output_items ?? parent?.responseData?.output
+      if (!parent || visiting.has(parent) || parent === call || !Array.isArray(output)) {
         complete = false; kind = "partial"; missingResponseID = previous
       } else {
         const ancestry = new Set(visiting); ancestry.add(call)
         const prior = resolve(parent, ancestry)
-        items = [...prior.items, ...parent.rawResponse.output_items, ...items]
+        items = [...prior.items, ...output, ...items]
         complete = complete && prior.complete
         kind = complete ? "reconstructed" : "partial"
         chain = [...prior.chain, call.index]
@@ -101,7 +103,7 @@ export function withModelInputs(calls) {
       }
     }
     const embeddedTools = items.filter(item => item.type === "additional_tools").flatMap(item => item.tools ?? [])
-    const context = { kind, complete, format: anthropic ? "anthropic" : "responses", model: raw.model ?? call.model,
+    const context = { kind, complete, format: anthropic ? "anthropic" : chat ? "chat" : "responses", model: raw.model ?? call.model,
       system: anthropic ? raw.system ?? null : raw.instructions ?? null, items,
       tools: raw.tools ?? (embeddedTools.length ? embeddedTools : null), chain, previousResponseID: previous ?? null, missingResponseID }
     memo.set(call, context)

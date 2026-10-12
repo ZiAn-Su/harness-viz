@@ -1,0 +1,51 @@
+{
+  "checkedAt": "2026-10-10",
+  "skills": {
+    "frontend-design": {
+      "repository": "anthropics/skills",
+      "revision": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "description": "Anthropic 官方前端设计技能，用于观察技能发现与按需加载。",
+      "files": {
+        "SKILL.md": "a5333457c414d20d625f307df945842c0952ecc3",
+        "LICENSE.txt": "f433b1a53f5b830a205fd2df78e2b34974656c7b"
+      }
+    },
+    "mcp-builder": {
+      "repository": "anthropics/skills",
+      "revision": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "description": "Anthropic 官方 MCP 开发技能，包含渐进加载的参考文档与脚本。",
+      "files": {
+        "SKILL.md": "8a1a77a47d141967b246adb4da4f91037578ff7d",
+        "LICENSE.txt": "4f881c52d1f72f4cfb720e339e2d35c3058d01a9",
+        "reference/evaluation.md": "87e9bb78840fac113d93b4a27ab5b229a18cf226",
+        "reference/mcp_best_practices.md": "b9d343cc3ae89b1fc139dae96bdb2b7e29ba3648",
+        "reference/node_mcp_server.md": "f6e5df982adc0848bf261c47ab8d65a1e0469391",
+        "reference/python_mcp_server.md": "cf7ec996d2e6e3655bc75ff6902738d03a37334e",
+        "scripts/connections.py": "ffcd0da3fbe1539320d022017ae83b61a9587a5c",
+        "scripts/evaluation.py": "41778569c45a458e0eea839b8917692ad65be2d5",
+        "scripts/example_evaluation.xml": "41e4459b5af861e61f1ca87d2f8f5ab5543dc054",
+        "scripts/requirements.txt": "e73e5d1e356edafadb9dc9243e6f300f2c5529b3"
+      }
+    }
+  },
+  "mcp": {
+    "context7": {
+      "package": "@upstash/context7-mcp",
+      "version": "4.3.0",
+      "entry": "dist/index.js",
+      "repository": "https://github.com/upstash/context7",
+      "description": "Upstash 文档 MCP，提供 resolve-library-id 和 query-docs 两个工具。"
+    }
+  },
+  "plugins": {
+    "dcp": {
+      "package": "@tarquinen/opencode-dcp",
+      "version": "3.2.0",
+      "entry": "dist/index.js",
+      "revision": "d637981555a18c3992472268a0657a948925d5fa",
+      "repository": "https://github.com/Tarquinen/opencode-dynamic-context-pruning",
+      "description": "OpenCode 上下文管理插件；专用默认关闭自动清理，压缩需确认。",
+      "dependencies": { "@opencode-ai/plugin": "1.18.34", "@opencode-ai/sdk": "1.18.34" }
+    }
+  }
+}

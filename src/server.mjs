@@ -1,22 +1,25 @@
 /**
  * Local evidence bridge for the releases pinned in versions.json.
- * OpenCode: owned serve process, V1 REST/global SSE and Anthropic proxy capture.
- * Codex: one exec process per run; official provider + native rollout traces by
- * default, or opt-in lossy Responses/Anthropic translation for third-party models.
+ * OpenCode: owned serve process, native configuration and lossless SDK HTTP observation.
+ * Codex: native TOML/profile discovery, one exec process per run and rollout traces.
  * Captured client payloads are not the final server-side prompt or private reasoning.
  * Replay is bounded in-memory; raw evidence and traces remain local sensitive data.
  */
 import { spawn, spawnSync } from "node:child_process"
 import { createServer } from "node:http"
-import { readFile, appendFile, writeFile, mkdir } from "node:fs/promises"
+import { readFile, appendFile, writeFile, mkdir, rm } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import os from "node:os"
 import { readTraceEvents, summarizeResponse, requestTools, withModelInputs } from "./trace.mjs"
 import { listTemplates, renderTemplatePreview } from "./template-preview.mjs"
 import { preparePinnedCli } from "./cli.mjs"
 import { listenLocal, openCodeRequestedPort, opencodeListeningPort } from "./ports.mjs"
+import { prepareExtensions, opencodeExtensions, codexExtensions, installCodexSkills, extensionInventory, DCP_CONFIG } from "./extensions.mjs"
+import { copyNativeCodexHome, discoverCodexModels, nativeOpenCodePaths, nativeOpenCodeProviderIDs, opencodeModelCatalog } from "./native-models.mjs"
+import { summarizeProxyResponse } from "./proxy-response.mjs"
+import { buildCallRecord } from "./call-record.mjs"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 if (process.argv.length > 2) throw new Error("请使用 npm start 启动；项目目录在 config/settings.json 的 projectPath 中设置。")
@@ -24,6 +27,7 @@ const CFG = JSON.parse(await readFile(process.env.VIZ_CONFIG_PATH ?? path.join(R
 const RUNTIME_DIR = path.resolve(process.env.VIZ_RUNTIME_DIR ?? path.join(ROOT, ".runtime"))
 // Verification runs isolate their data but reuse the repository's pinned binaries.
 const CLI_DIR = path.resolve(process.env.VIZ_CLI_DIR ?? path.join(ROOT, ".runtime", "cli"))
+const EXTENSIONS_DIR = path.resolve(process.env.VIZ_EXTENSIONS_DIR ?? path.join(ROOT, ".runtime", "extensions"))
 const projectPath = process.env.VIZ_TARGET_PROJECT || CFG.projectPath
 const TARGET_PROJECT = path.resolve(ROOT, projectPath || "examples/demo")
 await mkdir(RUNTIME_DIR, { recursive: true })
@@ -45,8 +49,11 @@ let OC_BASE = null
 const OC_PASSWORD = randomUUID()
 const AUTH = "Basic " + Buffer.from(`opencode:${OC_PASSWORD}`).toString("base64")
 
-const LLM_UPSTREAM = process.env.LLM_UPSTREAM ?? CFG.upstream
-const OC_MODEL = `minimax/${CFG.opencode.model}`
+// Legacy translated records remain readable; new runs use native provider configuration.
+const LLM_UPSTREAM = process.env.LLM_UPSTREAM ?? "https://api.minimaxi.com"
+let OC_MODEL = null, codexModel = null, nativeCodex = null, nativeOpenCode = null
+const modelCatalogs = { opencode: { models: [], defaultModel: null }, codex: { models: [], defaultModel: null } }
+let observedProviderIDs = [], codexOverrides = []
 
 let child = null
 let ocReady = false
@@ -56,6 +63,23 @@ let codexProc = null   // codex exec 子进程（每次运行一个）
 const versions = { opencode: "?", codex: "?" }
 let codexCommand = null, codexPrefix = [], ocLauncher = null
 const setupProcesses = new Set()
+let extensionBundle = { skills: [], mcp: [], plugins: [], selection: { enabled: false } }, extensionPromise = null
+const extensionState = { phase: CFG.extensions?.enabled ? "pending" : "disabled", error: null, message: "等待准备扩展", requested: CFG.extensions ?? { enabled: false } }
+function trackSetupProcess(proc) {
+  setupProcesses.add(proc)
+  proc.once("close", () => setupProcesses.delete(proc))
+}
+async function ensureExtensions() {
+  extensionPromise ??= prepareExtensions({ config: CFG.extensions, cacheRoot: EXTENSIONS_DIR, onProcess: trackSetupProcess,
+    onState: state => { Object.assign(extensionState, state); console.log(`[viz] 扩展: ${state.message}`) } })
+    .then(bundle => { extensionBundle = bundle; if (!bundle.selection.enabled) Object.assign(extensionState, { phase: "disabled", message: "扩展已关闭，可用于基线对比" }); return bundle })
+    .catch(err => { Object.assign(extensionState, { phase: "error", error: err.message, message: "扩展准备失败，使用无外部扩展的基线运行" }); console.log(`[viz] 扩展准备失败: ${err.message}`); return extensionBundle })
+  return extensionPromise
+}
+function configuredExtensions(harness) {
+  const bundle = harness === "codex" ? { ...extensionBundle, mcp: extensionBundle.mcp.filter(item => !modelCatalogs.codex.nativeMcpNames?.includes(item.name)) } : extensionBundle
+  return extensionInventory(bundle, harness, CODEX_HOME)
+}
 const cliStatus = Object.fromEntries(["opencode", "codex"].map(h => [h, {
   phase: "pending", available: false, version: SOURCE_LOCK[h].version, message: "等待准备固定 CLI…", error: null,
 }]))
@@ -67,22 +91,32 @@ function updateCliStatus(harness, patch) {
 async function prepareHarness(harness) {
   try {
     const launcher = await preparePinnedCli({ harness, version: SOURCE_LOCK[harness].version, cacheRoot: CLI_DIR,
-      onState: state => updateCliStatus(harness, state), onProcess: proc => {
-        setupProcesses.add(proc)
-        proc.once("close", () => setupProcesses.delete(proc))
-      } })
+      onState: state => updateCliStatus(harness, state), onProcess: trackSetupProcess })
     versions[harness] = launcher.version
     updateCliStatus(harness, { phase: "starting", message: "固定版本已核验，正在准备运行环境…",
       executable: launcher.command, launcher: launcher.prefix[0] ?? null, directory: launcher.directory })
+    await ensureExtensions()
     if (harness === "codex") {
       codexCommand = launcher.command
       codexPrefix = launcher.prefix
       await ensureCodexHome()
-      console.log(`[viz] codex CODEX_HOME: ${CODEX_HOME}; capture=${CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy"}`)
+      modelCatalogs.codex = await discoverCodexModels(launcher, CODEX_HOME, TARGET_PROJECT, trackSetupProcess)
+      // Do not replace an MCP service already declared by native Codex configuration.
+      const names = new Set(modelCatalogs.codex.nativeMcpNames ?? [])
+      codexOverrides = codexOverrides.filter((value, index, list) => value === "-c" ? ![...names].some(name => list[index + 1]?.startsWith(`mcp_servers.${name}.`)) : ![...names].some(name => value.startsWith(`mcp_servers.${name}.`)))
+      codexModel = modelCatalogs.codex.defaultModel
+      console.log(`[viz] Codex 原生模型发现: ${modelCatalogs.codex.models.length} 项；capture=native-trace`)
     } else {
       ocLauncher = launcher
       await startOpencode()
       await waitReady()
+      const providers = await oc("/config/providers", { signal: AbortSignal.timeout(120000) })
+      if (!providers.ok) throw new Error("无法读取 OpenCode 原生模型目录")
+      const configured = await oc("/config", { signal: AbortSignal.timeout(30000) })
+      const config = configured.ok ? await configured.json() : {}
+      modelCatalogs.opencode = opencodeModelCatalog((await providers.json()).providers ?? [], config.model)
+      OC_MODEL = modelCatalogs.opencode.defaultModel
+      console.log(`[viz] OpenCode 原生模型发现: ${modelCatalogs.opencode.models.length} 项`)
       upstreamLoop()
     }
     updateCliStatus(harness, { phase: "ready", available: true, message: `专用 ${harness} ${SOURCE_LOCK[harness].version} 已就绪`, error: null })
@@ -93,42 +127,17 @@ async function prepareHarness(harness) {
   }
 }
 
-/* ── codex 隔离：CODEX_HOME 指向运行目录 ──
- * useDefaultModel=false：config.toml 注册自定义 provider 把模型请求引到本代理（可捕获提示词）；
- * useDefaultModel=true：不写 model_provider，codex 直接用自带默认模型（ChatGPT 登录或
-  * API key），流量不经代理；请求上下文由本地原生 rollout trace 捕获。 */
+/* Codex loads a private snapshot of native config/auth; model configuration is not authored here. */
 const CODEX_HOME = path.join(RUNTIME_DIR, "codex-home")
-function codexConfig() {
-  return `model = ${JSON.stringify(CFG.codex.model)}
-approval_policy = "never"
-` + (CFG.codex.useDefaultModel ? "" : `
-model_provider = "viz"
-
-[model_providers.viz]
-name = "viz-proxy"
-base_url = "http://${HOST}:${LLM_PORT}/v1"
-${CFG.upstreamEnvKey ? `env_key = "${CFG.upstreamEnvKey}"` : ""}
-wire_api = "responses"
-`) + `
-[windows]
-sandbox = "unelevated"
-`
-}
 async function ensureCodexHome() {
-  await mkdir(CODEX_HOME, { recursive: true })
-  await writeFile(path.join(CODEX_HOME, "config.toml"), codexConfig())
-  /* useDefaultModel 时还要把用户的 ChatGPT 登录态复制进来（只拷贝，绝不动原文件），
-   * 否则隔离 CODEX_HOME 里没有凭据，codex 会要求登录。 */
-  if (CFG.codex.useDefaultModel) {
-    const userHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex")
-    for (const f of ["auth.json"]) {
-      const src = path.join(userHome, f)
-      try { await writeFile(path.join(CODEX_HOME, f), await readFile(src)) } catch {}
-    }
-  }
-  // Remove the legacy blanket shell allow rules; explicit allows can bypass sandboxing.
-  await mkdir(path.join(CODEX_HOME, "rules"), { recursive: true })
-  await writeFile(path.join(CODEX_HOME, "rules", "default.rules"), "# No blanket executable allow rules.\n")
+  nativeCodex = await copyNativeCodexHome(CODEX_HOME, process.env.VIZ_CODEX_SOURCE_HOME ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"))
+  await installCodexSkills(extensionBundle, CODEX_HOME)
+  codexOverrides = extensionBundle.mcp.flatMap(item => [
+    "-c", `mcp_servers.${item.name}.command=${JSON.stringify(item.command)}`,
+    "-c", `mcp_servers.${item.name}.args=${JSON.stringify(item.args)}`,
+    "-c", `mcp_servers.${item.name}.enabled=true`,
+    ...(item.name === "context7" ? ["-c", 'mcp_servers.context7.env_vars=["CONTEXT7_API_KEY"]'] : []),
+  ])
 }
 
 /* ── LLM 调用捕获 ─────────────────────────────────────── */
@@ -138,7 +147,7 @@ let llmIndex = 0
 /* ── 本地 SSE 广播（浏览器订阅 /api/stream） ─────────────── */
 const sseClients = new Set()
 const EVENT_LOG = path.join(RUNTIME_DIR, "events.jsonl")
-/* 上次运行的完整事件（内存保存：刷新页面可回放恢复，重启即清）。每个 harness 独立一份 */
+/* 当前观察对话的完整事件（包含用户续聊各轮；刷新可恢复，重启即清）。每个 harness 独立一份。 */
 const runs = { opencode: { sessionID: null, events: [] }, codex: { sessionID: null, events: [] } }
 const opencodeRunIDs = new Map()
 function broadcast(payload) {
@@ -178,35 +187,46 @@ async function startOpencode() {
   const home = path.join(RUNTIME_DIR, "opencode-home")
   const configDir = path.join(home, "config")
   await mkdir(configDir, { recursive: true })
-  const catalogPath = path.join(home, "models.json")
-  await writeFile(catalogPath, "{}") // Prevent the embedded catalog from adding unrelated models.
-  await writeFile(path.join(configDir, "opencode.json"), JSON.stringify({
-    model: OC_MODEL, small_model: OC_MODEL, autoupdate: false, enabled_providers: ["minimax"], permission: { edit: "ask" },
-    provider: { minimax: { name: "MiniMax", env: [CFG.upstreamEnvKey], npm: "@ai-sdk/anthropic",
-      api: `http://${HOST}:${LLM_PORT}/anthropic/v1`, models: { [CFG.opencode.model]: {
-        name: CFG.opencode.model, attachment: true, reasoning: true, temperature: true, tool_call: true,
-        modalities: { input: ["text", "image", "video"], output: ["text"] }, limit: CFG.opencode.limit,
-      } } } },
-  }))
+  nativeOpenCode = await nativeOpenCodePaths(ocLauncher, TARGET_PROJECT)
+  const overlay = { $schema: "https://opencode.ai/config.json", autoupdate: false, ...opencodeExtensions(extensionBundle) }
+  await writeFile(path.join(configDir, "opencode.json"), JSON.stringify(overlay))
+  const authTarget = path.join(home, "data", "opencode", "auth.json")
+  await mkdir(path.dirname(authTarget), { recursive: true })
+  try { await writeFile(authTarget, await readFile(path.join(nativeOpenCode.data, "auth.json"))) }
+  catch (err) { if (err.code !== "ENOENT") throw err; await rm(authTarget, { force: true }) }
+  if (extensionBundle.plugins.some(item => item.name === "dcp")) {
+    await writeFile(path.join(configDir, "dcp.json"), JSON.stringify(DCP_CONFIG, null, 2))
+    // DCP also reads XDG_CONFIG_HOME/opencode; keep that generated layer scoped.
+    await mkdir(path.join(configDir, "opencode"), { recursive: true })
+    await writeFile(path.join(configDir, "opencode", "dcp.json"), JSON.stringify(DCP_CONFIG, null, 2))
+  }
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE_")))
   const env = {
     ...inherited,
-    XDG_CONFIG_HOME: path.join(home, "config"),
     XDG_DATA_HOME: path.join(home, "data"),
     XDG_CACHE_HOME: path.join(home, "cache"),
     XDG_STATE_HOME: path.join(home, "state"),
-    OPENCODE_TEST_HOME: home,
     OPENCODE_CONFIG_DIR: configDir,
     OPENCODE_DB: path.join(RUNTIME_DIR, "opencode.db"),
-    OPENCODE_DISABLE_PROJECT_CONFIG: "1",
-    OPENCODE_MODELS_PATH: catalogPath,
+    OPENCODE_DISABLE_PROJECT_CONFIG: "0",
     OPENCODE_DISABLE_MODELS_FETCH: "1",
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     OPENCODE_SERVER_PASSWORD: OC_PASSWORD,
     OPENCODE_CLIENT: "harness-viz",
+    OPENCODE_ENABLE_QUESTION_TOOL: CFG.tools?.question ? "1" : "0",
+    OPENCODE_ENABLE_EXA: CFG.tools?.websearch === "exa" ? "1" : "0",
+    OPENCODE_ENABLE_PARALLEL: CFG.tools?.websearch === "parallel" ? "1" : "0",
+    ...(CFG.tools?.websearch ? { OPENCODE_WEBSEARCH_PROVIDER: CFG.tools.websearch } : {}),
     OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
   }
+  // Keep native model/env configuration; isolate only auth/runtime writes.
+  for (const key of ["OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_MODELS_PATH"]) if (process.env[key]) env[key] = process.env[key]
+  observedProviderIDs = await nativeOpenCodeProviderIDs(ocLauncher, TARGET_PROJECT, env)
+  overlay.plugin.push(pathToFileURL(path.join(ROOT, "src", "observer-plugin.mjs")).href)
+  await writeFile(path.join(configDir, "opencode.json"), JSON.stringify(overlay))
+  env.HARNESS_VIZ_PROXY = `http://${HOST}:${LLM_PORT}`
+  env.HARNESS_VIZ_PROVIDERS = JSON.stringify(observedProviderIDs)
   child = spawn(ocLauncher.command, [...ocLauncher.prefix, "serve", "--port", String(OC_PORT), "--hostname", HOST], {
     env,
     cwd: TARGET_PROJECT,
@@ -321,15 +341,24 @@ const llmProxy = createServer(async (req, res) => {
   let bodyJson = null
   try { bodyJson = JSON.parse(raw.toString("utf8")) } catch {}
 
-  /* codex 只讲 Responses API（POST /v1/responses）——单独处理：捕获 + 翻译成 Anthropic 调上游 */
-  if ((req.url ?? "").startsWith("/v1/responses")) return handleCodexResponses(req, res, raw, bodyJson, startedAt, index)
+  if (req.url !== "/opencode-observe") { res.writeHead(404); res.end(); return }
+  const providerID = req.headers["x-harness-provider"]
+  if (!observedProviderIDs.includes(providerID)) { res.writeHead(403); res.end("Unknown native provider"); return }
+  let target
+  try { target = new URL(req.headers["x-harness-upstream-url"]) } catch { res.writeHead(400); res.end("Missing native target"); return }
+  if (!["https:", "http:"].includes(target.protocol) || target.username || target.password) { res.writeHead(400); res.end("Invalid native target"); return }
+  const protocol = target.pathname.endsWith("/responses") ? "responses" : target.pathname.endsWith("/chat/completions") ? "chat" : "anthropic"
 
   const call = {
     index,
     startedAt,
-    path: req.url,
+    path: target.pathname,
+    upstreamOrigin: target.origin,
+    providerID,
     harness: "opencode",
     source: "proxy",
+    protocol,
+    extensions: configuredExtensions("opencode"),
     runID: opencodeRunIDs.get(req.headers["x-opencode-session-id"]) ?? null,
     sessionID: req.headers["x-opencode-session-id"] ?? null,
     parentSessionID: req.headers["x-opencode-parent-session-id"] ?? null,
@@ -348,10 +377,12 @@ const llmProxy = createServer(async (req, res) => {
     source: "proxy", runID: call.runID,
     properties: {
       index, model: call.model,
-      systemChars: typeof bodyJson?.system === "string" ? bodyJson.system.length
+      protocol: call.protocol, providerID: call.providerID, path: call.path, upstreamOrigin: call.upstreamOrigin,
+      systemChars: protocol === "chat" ? (bodyJson?.messages ?? []).filter(m => ["system", "developer"].includes(m.role)).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content ?? "").length), 0)
+        : typeof bodyJson?.instructions === "string" ? bodyJson.instructions.length : typeof bodyJson?.system === "string" ? bodyJson.system.length
         : Array.isArray(bodyJson?.system) ? JSON.stringify(bodyJson.system).length : 0,
-      messages: Array.isArray(bodyJson?.messages) ? bodyJson.messages.length : 0,
-      tools: Array.isArray(bodyJson?.tools) ? bodyJson.tools.map((t) => t.name) : [],
+      messages: Array.isArray(bodyJson?.messages) ? bodyJson.messages.length : bodyJson?.input?.length ?? 0,
+      tools: requestTools(bodyJson).names,
       stream: Boolean(bodyJson?.stream),
       sessionID: call.sessionID, parentSessionID: call.parentSessionID, source: call.source,
     },
@@ -363,7 +394,9 @@ const llmProxy = createServer(async (req, res) => {
     const headers = { ...req.headers }
     delete headers.host
     delete headers["content-length"]
-    const upstream = await fetch(LLM_UPSTREAM + req.url, {
+    delete headers["x-harness-upstream-url"]
+    delete headers["x-harness-provider"]
+    const upstream = await fetch(target.href, {
       method: req.method,
       headers,
       body: raw.length ? raw : undefined,
@@ -387,12 +420,13 @@ const llmProxy = createServer(async (req, res) => {
     res.end()
     call.ms = Date.now() - startedAt
     call.endedAt = Date.now()
-    call.response = parseAnthropicSSE(captured)
+    call.response = protocol === "anthropic" ? parseAnthropicSSE(captured) : summarizeProxyResponse(captured, protocol)
+    if (call.response.responseData) call.responseData = call.response.responseData
     call.rawResponse = captured
     call.httpStatus = upstream.status
     if (!upstream.ok) call.error = `Upstream HTTP ${upstream.status}: ${captured.slice(0, 1000)}`
     else if (call.response.streamError) call.error = call.response.streamError
-    else if (call.request?.stream && !call.response.terminal) call.error = "Upstream stream ended without message_stop"
+    else if (call.request?.stream && !call.response.terminal) call.error = "Upstream stream ended without its terminal event"
     broadcast({
       id: `llm-${index}-res`,
       type: "llm.response",
@@ -411,7 +445,7 @@ const llmProxy = createServer(async (req, res) => {
     call.error = String(err?.message ?? err)
     call.ms = Date.now() - startedAt
     call.rawResponse = captured
-    call.response = parseAnthropicSSE(captured)
+    call.response = protocol === "anthropic" ? parseAnthropicSSE(captured) : summarizeProxyResponse(captured, protocol)
     broadcast({ id: `llm-${index}-err`, type: "llm.response", source: "proxy", runID: call.runID, properties: { index, ms: call.ms, error: call.error, source: call.source, sessionID: call.sessionID } })
     if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "LLM 代理转发失败: " + call.error }))
@@ -455,24 +489,28 @@ function parseAnthropicSSE(raw) {
 
 /* ═══════════════ codex：codex exec --json 拉起 + 事件解析 ═══════════════ */
 /* exec_events::ThreadEvent is a selective presentation protocol, not a core trace.
- * This invocation explicitly configures never approvals and workspace-write. */
-async function runCodex(prompt) {
+ * Model and permission settings remain native; resume uses an explicit thread ID. */
+async function runCodex(prompt, selected, reasoningEffort, resumeSessionID) {
   /* 直接 node 跑 codex 启动器，不走 shell:true —— cmd 的引号/特殊字符解析会把
    * 中文长 prompt 拆坏（实测 exit code 2 用法错误）。 */
   const args = [
     ...codexPrefix,
     "exec", "--json", "--skip-git-repo-check",
     "-C", TARGET_PROJECT,
-    "-s", "workspace-write",
-    "-m", CFG.codex.model,
+    ...(selected?.profile ? ["--profile", selected.profile] : []),
+    ...(selected?.model ? ["-m", selected.model] : []),
+    ...(selected?.providerID ? ["-c", `model_provider=${JSON.stringify(selected.providerID)}`] : []),
+    ...codexOverrides,
+    ...(reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`] : []),
+    ...(resumeSessionID ? ["resume", resumeSessionID] : []),
     prompt,
   ]
   const run = runs.codex
   const env = { ...process.env, CODEX_HOME }
   delete env.CODEX_ROLLOUT_TRACE_ROOT
   let stopCapture = async () => {}
-  if (CFG.codex.useDefaultModel) {
-    const traceRoot = path.join(RUNTIME_DIR, "codex-traces", run.runID)
+  {
+    const traceRoot = path.join(RUNTIME_DIR, "codex-traces", run.runID, String(run.turnNumber ?? 1))
     await mkdir(traceRoot, { recursive: true })
     env.CODEX_ROLLOUT_TRACE_ROOT = traceRoot
     run.traceRoot = traceRoot
@@ -480,7 +518,7 @@ async function runCodex(prompt) {
   }
   codexProc = spawn(codexCommand, args, { env, cwd: TARGET_PROJECT, stdio: ["ignore", "pipe", "pipe"] })
   const proc = codexProc
-  broadcast({ id: `cx-start-${Date.now()}`, harness: "codex", type: "codex.proc.start", properties: { executable: codexCommand, args: args.slice(0, -1), model: CFG.codex.model, captureSource: CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy", sandbox: "workspace-write", approvalPolicy: "never", version: versions.codex } })
+  broadcast({ id: `cx-start-${Date.now()}`, harness: "codex", conversationTurn: run.turnNumber, type: "codex.proc.start", properties: { executable: codexCommand, args: args.slice(0, -1), resumedSessionID: resumeSessionID ?? null, model: selected?.model, providerID: selected?.providerID, captureSource: "native-trace", sandbox: modelCatalogs.codex.sandbox ?? "原生 exec 默认", approvalPolicy: modelCatalogs.codex.approvalPolicy ?? "原生 exec 默认", version: versions.codex } })
   console.log(`[codex] spawn exec (pid=${proc.pid})`)
 
   let buf = ""
@@ -489,7 +527,7 @@ async function runCodex(prompt) {
     let evt
     try { evt = JSON.parse(line) } catch { console.log("[codex:stdout] Invalid JSONL"); return }
     if (evt.type === "thread.started" && evt.thread_id) run.sessionID = evt.thread_id
-    broadcast({ id: `cx-${randomUUID()}`, harness: "codex", runID: run.runID, source: "codex-exec", type: "codex." + evt.type, properties: evt })
+    broadcast({ id: `cx-${randomUUID()}`, harness: "codex", runID: run.runID, conversationTurn: run.turnNumber, source: "codex-exec", type: "codex." + evt.type, properties: evt })
   }
   const stdoutDecoder = new TextDecoder()
   proc.stdout.on("data", (d) => {
@@ -511,7 +549,7 @@ async function runCodex(prompt) {
     run.active = false
     console.log(`[codex] 进程退出 code=${code} signal=${signal}`)
     broadcast({ id: `cx-exit-${Date.now()}`, harness: "codex", type: "codex.proc.exit",
-      runID: run.runID, properties: { code, signal, aborted: Boolean(run.aborted), stderrTail: errBuf.trim().split("\n").slice(-5).join("\n") } })
+      runID: run.runID, conversationTurn: run.turnNumber, properties: { code, signal, aborted: Boolean(run.aborted), stderrTail: errBuf.trim().split("\n").slice(-5).join("\n") } })
   })
 }
 
@@ -522,11 +560,11 @@ function captureCodexTrace(root, run) {
     for (const { bundle, event, payloads, rawPayloads } of await readTraceEvents(root, cursors)) {
       const p = event.payload
       const evidence = { bundle, event }
-      const base = { harness: "codex", runID: run.runID, source: "native-trace" }
+      const base = { harness: "codex", runID: run.runID, conversationTurn: run.turnNumber, source: "native-trace" }
       if (p.type === "inference_started") {
         const request = payloads.request_payload
         const r = request?.request ?? request ?? {}
-        const call = { index: ++llmIndex, harness: "codex", runID: run.runID, source: "native-trace", model: p.model,
+        const call = { index: ++llmIndex, harness: "codex", runID: run.runID, conversationTurn: run.turnNumber, source: "native-trace", model: p.model, extensions: configuredExtensions("codex"),
           sessionID: p.thread_id, turnID: p.codex_turn_id, inferenceCallID: p.inference_call_id,
           startedAt: event.wall_time_unix_ms, request, requestRaw: rawPayloads.request_payload, response: null, error: null, trace: evidence }
         calls.set(p.inference_call_id, call)
@@ -634,6 +672,7 @@ async function handleCodexResponses(req, res, raw, bodyJson, startedAt, index) {
     index, startedAt, path: req.url, harness: "codex",
     model: bodyJson?.model ?? null,
     source: "translation-proxy", runID: runs.codex.runID,
+    extensions: configuredExtensions("codex"),
     request: bodyJson,       // Responses 原始请求（完整捕获：instructions/input/tools）
     requestRaw: raw.toString("utf8"),
     anthropicRequest: null,  // 翻译后的 Anthropic 请求（供对照）
@@ -822,16 +861,39 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/api/status") {
-      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel: CFG.codex.model, codexCapture: true,
-        codexCaptureSource: CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy", ocModel: OC_MODEL,
+      json(res, { ocReady, targetProject: TARGET_PROJECT, llmCalls: llmCalls.length, codexModel, codexCapture: true,
+        codexCaptureSource: "native-trace", ocModel: OC_MODEL,
         versions, sourceLock: SOURCE_LOCK, cliStatus, cliDirectory: CLI_DIR,
+        conversations: Object.fromEntries(Object.entries(runs).map(([h, run]) => [h, { sessionID: run.sessionID, runID: run.runID, active: !!run.active, turnNumber: run.turnNumber ?? 0 }])),
+        nativeModelConfiguration: { opencode: nativeOpenCode ? { globalDirectory: nativeOpenCode.config, projectDirectory: TARGET_PROJECT } : null,
+          codex: nativeCodex, tools: CFG.tools ?? {}, counts: { opencode: modelCatalogs.opencode.models.length, codex: modelCatalogs.codex.models.length } },
+        extensions: { state: extensionState, opencode: configuredExtensions("opencode"), codex: configuredExtensions("codex") },
         ports: { visualization: VIZ_PORT, opencode: OC_BASE ? OC_PORT : null, llm: LLM_PORT || null },
         codexExecutable: codexCommand, codexLauncher: codexPrefix[0] ?? null })
       return
     }
 
+    if (req.method === "GET" && url.pathname === "/api/extensions") {
+      const inventory = { state: extensionState, opencode: configuredExtensions("opencode"), codex: configuredExtensions("codex"),
+        observed: { harness: "opencode", available: ocReady } }
+      if (ocReady) {
+        // Global health precedes lazy project initialization. Share that wait across
+        // independent discovery reads and keep the total wait bounded to one minute.
+        const selected = modelCatalogs.opencode.models.find(m => m.value === OC_MODEL)
+        await Promise.all([["skills", "/skill"], ["mcp", "/mcp"], ...(selected ? [["tools", `/experimental/tool?provider=${encodeURIComponent(selected.providerID)}&model=${encodeURIComponent(selected.model)}`]] : [])].map(async ([key, route]) => {
+          try {
+            const response = await oc(route, { signal: AbortSignal.timeout(60000) })
+            inventory.observed[key] = response.ok ? await response.json() : { error: `HTTP ${response.status}` }
+          } catch (err) { inventory.observed[key] = { error: err.message } }
+        }))
+      }
+      return json(res, inventory)
+    }
+
     if (req.method === "GET" && url.pathname === "/api/models") {
-      json(res, { models: [{ value: OC_MODEL, label: CFG.opencode.model }] })
+      const harness = url.searchParams.get("harness") ?? "opencode"
+      if (!modelCatalogs[harness]) return json(res, { error: "Unknown harness" }, 400)
+      json(res, { ...modelCatalogs[harness], source: "native-cli-configuration", harness })
       return
     }
 
@@ -854,12 +916,19 @@ const server = createServer(async (req, res) => {
       const call = withModelInputs(llmCalls).find(c => c.index === index)
       if (!call) return json(res, { error: `未找到调用 #${index}` }, 404)
       try {
-        const result = await renderTemplatePreview({ modelInput: call.modelInput, templateId })
+        const result = await renderTemplatePreview({ modelInput: call.modelInput, templateId, mode: url.searchParams.get("mode") ?? "request", call, events: runs[call.harness ?? "opencode"]?.events ?? [] })
         json(res, { ok: true, index, ...result })
       } catch (err) {
         json(res, { error: String(err?.message ?? err) }, 502)
       }
       return
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/call-record") {
+      const index = Number(url.searchParams.get("index"))
+      const call = llmCalls.find(c => c.index === index)
+      if (!call) return json(res, { error: "未找到调用" }, 404)
+      return json(res, buildCallRecord(call, runs[call.harness ?? "opencode"]?.events ?? []))
     }
 
     if (req.method === "GET" && url.pathname === "/api/last-run") {
@@ -869,40 +938,54 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/run") {
-      const { prompt, model, harness = "opencode" } = await readBody(req)
+      const { prompt, model, variant, reasoningEffort, continueSessionID, harness = "opencode" } = await readBody(req)
       if (!["codex", "opencode"].includes(harness)) return json(res, { error: "Unknown harness" }, 400)
       if (typeof prompt !== "string" || !prompt.trim()) return json(res, { error: "prompt 不能为空" }, 400)
       if (!cliStatus[harness].available) return json(res, { error: cliStatus[harness].error ?? cliStatus[harness].message, cliStatus: cliStatus[harness] }, 503)
       if (Object.values(runs).some(run => run.active)) return json(res, { error: "A run is active; abort or wait before starting another task" }, 409)
-      for (let i = llmCalls.length - 1; i >= 0; i--) if ((llmCalls[i].harness ?? "opencode") === harness) llmCalls.splice(i, 1)
-      runs[harness] = { sessionID: null, events: [], runID: randomUUID(), active: true, versions: { ...versions },
+      const previous = runs[harness], continuing = continueSessionID != null
+      if (continuing && (typeof continueSessionID !== "string" || !continueSessionID || !previous.runID || continueSessionID !== previous.sessionID)) return json(res, { error: "没有可继续的当前会话，请取消勾选后开启新会话。" }, 400)
+      const selected = modelCatalogs[harness].models.find(m => m.value === (model ?? modelCatalogs[harness].defaultModel))
+      if (!selected) return json(res, { error: "未找到已配置的原生模型；请在原生配置中设置模型并重启后选择。" }, 400)
+      if (variant != null && variant !== "" && (harness !== "opencode" || typeof variant !== "string" || !selected.variants?.includes(variant))) return json(res, { error: "未找到该模型已配置的原生变体" }, 400)
+      if (reasoningEffort != null && reasoningEffort !== "" && (harness !== "codex" || typeof reasoningEffort !== "string" || !selected.reasoningEfforts?.includes(reasoningEffort))) return json(res, { error: "该模型不支持此思考强度" }, 400)
+      if (!continuing) for (let i = llmCalls.length - 1; i >= 0; i--) if ((llmCalls[i].harness ?? "opencode") === harness) llmCalls.splice(i, 1)
+      // runID groups this observed conversation; turnNumber counts submitted user inputs,
+      // not native loop iterations or model calls. Each turn owns a separate active flag.
+      runs[harness] = { sessionID: continuing ? continueSessionID : null, events: continuing ? previous.events : [],
+        runID: continuing ? previous.runID : randomUUID(), turnNumber: continuing ? (previous.turnNumber ?? 1) + 1 : 1, active: true, versions: { ...versions },
         sourceLock: SOURCE_LOCK, targetProject: TARGET_PROJECT,
-        configuration: { model: harness === "codex" ? CFG.codex.model : model ?? OC_MODEL, captureSource: harness === "codex" ? CFG.codex.useDefaultModel ? "native-trace" : "translation-proxy" : "proxy" } }
+        extensions: configuredExtensions(harness),
+        configuration: { model: selected.model, providerID: selected.providerID, profile: selected.profile ?? null, variant: variant || null,
+          reasoningEffort: (harness === "codex" ? reasoningEffort : variant) || null, captureSource: harness === "codex" ? "native-trace" : "proxy" } }
       admittedRun = runs[harness]
 
       if (harness === "codex") {
         /* codex exec：一次性进程，prompt 作为参数；事件走 stdout JSONL（exec_events.rs:11）。
          * viz.run 先广播，前端据此清空/重建现场。 */
-        broadcast({ id: `run-${Date.now()}`, harness: "codex", type: "viz.run", properties: { prompt, configuration: runs.codex.configuration } })
-        await runCodex(prompt)
-        json(res, { sessionID: null, harness: "codex" })
+        broadcast({ id: `run-${randomUUID()}`, harness: "codex", conversationTurn: admittedRun.turnNumber, type: "viz.run",
+          properties: { prompt, configuration: runs.codex.configuration, sessionID: runs.codex.sessionID, continuing, turnNumber: admittedRun.turnNumber } })
+        await runCodex(prompt, selected, reasoningEffort || null, continuing ? continueSessionID : null)
+        json(res, { sessionID: runs.codex.sessionID, harness: "codex", continuing, turnNumber: admittedRun.turnNumber })
         return
       }
 
-      const created = await oc("/session", {
-        method: "POST",
-        body: JSON.stringify({ title: "harness-viz " + new Date().toLocaleTimeString("zh-CN") }),
-      })
-      if (!created.ok) { runs.opencode.active = false; return json(res, { error: "创建会话失败: " + (await created.text()) }, 502) }
-      const session = await created.json()
+      let session = { id: continueSessionID }
+      if (!continuing) {
+        const created = await oc("/session", {
+          method: "POST",
+          body: JSON.stringify({ title: "harness-viz " + new Date().toLocaleTimeString("zh-CN") }),
+        })
+        if (!created.ok) { runs.opencode.active = false; return json(res, { error: "创建会话失败: " + (await created.text()) }, 502) }
+        session = await created.json()
+      }
       runs.opencode.sessionID = session.id
       opencodeRunIDs.set(session.id, admittedRun.runID)
-      broadcast({ id: `run-${Date.now()}`, harness: "opencode", type: "viz.run", properties: { prompt, model: model ?? null, sessionID: session.id } })
+      broadcast({ id: `run-${randomUUID()}`, harness: "opencode", conversationTurn: admittedRun.turnNumber, type: "viz.run",
+        properties: { prompt, model: selected.value, configuration: runs.opencode.configuration, sessionID: session.id, continuing, turnNumber: admittedRun.turnNumber } })
       const body = { parts: [{ type: "text", text: prompt }] }
-      if (model ?? OC_MODEL) {
-        const [providerID, ...rest] = String(model ?? OC_MODEL).split("/")
-        body.model = { providerID, modelID: rest.join("/") }
-      }
+      if (variant) body.variant = variant
+      body.model = { providerID: selected.providerID, modelID: selected.model }
       // prompt() 会同步跑完整个 runLoop 才返回（遇权限询问会挂起），所以这里
       // 【发后即忘】：立即把 sessionID 还给浏览器，运行过程全部由事件流呈现。
       const run = runs.opencode
@@ -910,11 +993,11 @@ const server = createServer(async (req, res) => {
         .then(async (r) => {
           if (!r.ok) throw new Error(`Prompt HTTP ${r.status}: ${await r.text()}`)
           const result = await r.json()
-          broadcast({ harness: "opencode", runID: run.runID, type: "viz.prompt.returned", properties: { sessionID: session.id, result } })
+          broadcast({ harness: "opencode", runID: run.runID, conversationTurn: run.turnNumber, type: "viz.prompt.returned", properties: { sessionID: session.id, result } })
         })
         .catch(err => broadcast({ harness: "opencode", runID: run.runID, type: "session.error", source: "viz", properties: { sessionID: session.id, error: { name: "SubmissionError", message: err.message } } }))
         .finally(() => { run.active = false })
-      json(res, { sessionID: session.id })
+      json(res, { sessionID: session.id, continuing, turnNumber: admittedRun.turnNumber })
       return
     }
 
@@ -938,6 +1021,28 @@ const server = createServer(async (req, res) => {
       const r = await oc(`/permission/${requestID}/reply`, { method: "POST", body: JSON.stringify({ reply }) })
       json(res, { ok: r.ok, status: r.status })
       return
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/questions") {
+      if (!ocReady || !runs.opencode.runID) return json(res, { questions: [] })
+      const response = await oc("/question")
+      if (!response.ok) return json(res, { error: "无法读取待答问题" }, response.status)
+      const questions = await response.json()
+      return json(res, { questions: questions.filter(q => opencodeRunIDs.get(q.sessionID) === runs.opencode.runID) })
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/question") {
+      const { requestID, action = "reply", answers } = await readBody(req)
+      if (!runs.opencode.runID) return json(res, { error: "没有可答复的当前运行" }, 404)
+      if (typeof requestID !== "string" || !["reply", "reject"].includes(action)) return json(res, { error: "缺少有效的 requestID/action" }, 400)
+      if (action === "reply" && (!Array.isArray(answers) || answers.some(a => !Array.isArray(a) || a.some(v => typeof v !== "string")))) return json(res, { error: "answers 必须是按问题顺序排列的字符串数组列表" }, 400)
+      const listed = await oc("/question")
+      if (!listed.ok) return json(res, { error: "无法核对待答问题" }, listed.status)
+      const question = (await listed.json()).find(q => q.id === requestID && opencodeRunIDs.get(q.sessionID) === runs.opencode.runID)
+      if (!question) return json(res, { error: "问题已结束或不属于当前运行" }, 404)
+      if (action === "reply" && answers.length !== question.questions.length) return json(res, { error: "答案数量与问题数量不一致" }, 400)
+      const response = await oc(`/question/${encodeURIComponent(requestID)}/${action}`, { method: "POST", body: JSON.stringify(action === "reply" ? { answers } : {}) })
+      return json(res, { ok: response.ok, status: response.status }, response.ok ? 200 : response.status)
     }
 
     if (req.method === "POST" && url.pathname === "/api/abort") {
@@ -968,7 +1073,7 @@ const server = createServer(async (req, res) => {
 
 async function main() {
   console.log(`[viz] 目标项目目录: ${TARGET_PROJECT}`)
-  console.log(`[viz] LLM 上游: ${LLM_UPSTREAM}`)
+  console.log("[viz] 模型配置: OpenCode/Codex 原生配置；观察器不指定 provider、模型或密钥。")
   try { VIZ_PORT = await listenLocal(server, { port: VIZ_PORT, host: HOST, fallback: false }) } catch (err) {
     if (["EADDRINUSE", "EACCES"].includes(err.code)) throw new Error(`网页端口 ${VIZ_PORT} 被占用或不可用；请检查是否已启动 harness-viz，关闭已有实例后重试 npm start。`, { cause: err })
     throw err
