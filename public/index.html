@@ -1066,7 +1066,7 @@ function focusExecution(index) {
   const record = records.find(r => row.index != null ? r.data?.index === row.index
     : row.callID ? (r.data?.callID ?? r.data?.id ?? r.data?.event?.payload?.tool_call_id) === row.callID : r.event?.id === row.event.id)
   if (record) {
-    const div = document.getElementById("nodePanel").children[records.indexOf(record)]
+    const div = [...document.getElementById("nodePanel").children].find(el => el.dataset.recordSeq === String(record.seq))
     if (div && !div.classList.contains("open")) toggleRecDetail(div, record)
     div?.scrollIntoView?.({ block: "nearest" })
   }
@@ -1098,7 +1098,7 @@ document.getElementById("nextStep").onclick = () => moveExecution(1)
 function addRecord(nodeId, title, meta, kind, data, evidence = "direct") {
   const list = store[nodeId] ??= []
   const rec = { seq: list.length + 1, time: currentEvent ? currentEvent.receivedAt ?? "receivedAt 未提供" : now(), title, meta, kind, data,
-    evidence, source: currentEvent ? currentEvent.source ?? currentEvent.properties?.source ?? "未标注" : "viz", event: currentEvent }
+    evidence, source: currentEvent ? currentEvent.source ?? currentEvent.properties?.source ?? "未标注" : "viz", firstEvent: currentEvent, event: currentEvent }
   list.push(rec)
   if (nodeId === selectedNode && activeTab === "records") renderRecords()
   const el = document.getElementById("fn-" + nodeId)
@@ -1111,7 +1111,8 @@ function updateRec(nodeId, pred, patch) {
   if (!rec) return
   rec.data = patch
   if (currentEvent) {
-    rec.event = currentEvent; rec.source = currentEvent.source ?? currentEvent.properties?.source ?? "未标注"; rec.time = currentEvent.receivedAt ?? "receivedAt 未提供"
+    rec.event = currentEvent
+    rec.updatedAt = currentEvent.receivedAt ?? "receivedAt 未提供"
   }
   if (nodeId === selectedNode && activeTab === "records") renderRecords()
 }
@@ -1135,7 +1136,7 @@ function selectNode(id) {
     if (e.dataset.node === id) e.classList.remove("unread")   // 清除"有新记录"圆点
   })
   document.getElementById("nodeTitle").innerHTML =
-    `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} 条记录</span>`
+    `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} ${id === "loop" ? "份模型输入参考" : "条记录"}</span>`
   renderPanel()
 }
 document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(el => el.onclick = () => { setView("details", true); selectNode(el.dataset.node) })
@@ -1147,9 +1148,12 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
 function renderPanel() { activeTab === "records" ? renderRecords() : renderDoc() }
 
 function renderRecords() {
-  const list = store[selectedNode] ?? []
+  const list = [...(store[selectedNode] ?? [])].sort((a, b) => {
+    const first = Date.parse(a.time), second = Date.parse(b.time)
+    return (Number.isNaN(first) ? Infinity : first) - (Number.isNaN(second) ? Infinity : second) || a.seq - b.seq
+  })
   document.getElementById("nodeTitle").innerHTML =
-    `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} 条记录</span>`
+    `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} ${selectedNode === "loop" ? "份模型输入参考" : "条记录"}</span>`
   const panel = document.getElementById("nodePanel")
   if (!list.length) {
     const childTools = selectedNode === "tool" ? execution.entries().filter(r => r.relatedNode === "tool" && r.child) : []
@@ -1159,12 +1163,19 @@ function renderRecords() {
     return
   }
   panel.innerHTML = ""
-  for (const rec of list) {
+  if (selectedNode === "loop") {
+    const notice = document.createElement("p"); notice.className = "readable-note history-evidence-note"
+    notice.textContent = "未直接采集会话存储的读取事件。下面是各次模型输入中的历史参考，份数不代表读取次数。"
+    panel.appendChild(notice)
+  }
+  for (const [position, rec] of list.entries()) {
     const div = document.createElement("div"); div.className = "rec"
+    div.dataset.recordSeq = String(rec.seq)
     const time = Number.isNaN(Date.parse(rec.time)) ? rec.time : new Date(rec.time).toLocaleTimeString("zh-CN")
-    div.innerHTML = `<div class="hd" title="${rec.kind === "llm" ? "查看模型输入与响应" : rec.kind === "context" ? "查看本次发给模型的历史" : "查看记录"}"><span class="idx">${rec.seq}</span><b>${escapeHtml(rec.title)}</b><span class="tm" title="${escapeHtml(rec.time)}">${escapeHtml(time)}</span>${["llm", "context"].includes(rec.kind) ? `<span class="rec-action">${rec.kind === "context" ? "查看历史内容" : "查看输入与输出"}</span>` : ""}</div>
+    const updated = rec.updatedAt ? `<p class="readable-note">首次接收：${escapeHtml(rec.time)}；最近更新：${escapeHtml(rec.updatedAt)}。内容为最新快照，列表时间按首次接收排列。</p>` : ""
+    div.innerHTML = `<div class="hd" title="${rec.kind === "llm" ? "查看模型输入与响应" : rec.kind === "context" ? "查看本次发给模型的历史" : "查看记录"}"><span class="idx">${position + 1}</span><b>${escapeHtml(rec.title)}</b><span class="tm" title="首次接收：${escapeHtml(rec.time)}">${escapeHtml(time)}</span>${["llm", "context"].includes(rec.kind) ? `<span class="rec-action">${rec.kind === "context" ? "查看历史内容" : "查看输入与输出"}</span>` : ""}</div>
       <details class="record-meta"><summary>${{ direct: "事件", boundary: "请求", inferred: "推断" }[rec.evidence]} · ${escapeHtml(rec.source)}</summary>
-      ${rec.meta ? `<div class="meta">${rec.meta}</div>` : ""}</details>
+      ${updated}${rec.meta ? `<div class="meta">${rec.meta}</div>` : ""}</details>
       <div class="detail"><div class="waiting">展开加载中…</div></div>`
     div.querySelector(".hd").onclick = () => toggleRecDetail(div, rec)
     panel.appendChild(div)
@@ -1197,7 +1208,9 @@ async function toggleRecDetail(div, rec) {
       populateTemplateSelects(detail)
     } catch (err) { detail.innerHTML = `<div class="waiting">加载失败，可重新展开：${escapeHtml(String(err))}</div>` }
   } else {
-    detail.innerHTML = renderRecordSummary(rec) + rawDetail("完整记录数据", rec.data) + (rec.event ? rawDetail("原始框架事件（完整，含来源与接收时间）", rec.event) : "")
+    detail.innerHTML = renderRecordSummary(rec) + rawDetail("完整记录数据（当前快照）", rec.data)
+      + (rec.firstEvent && rec.firstEvent !== rec.event ? rawDetail("首次框架事件（完整，含来源与接收时间）", rec.firstEvent) : "")
+      + (rec.event ? rawDetail(rec.updatedAt ? "最近更新事件（完整，含来源与接收时间）" : "原始框架事件（完整，含来源与接收时间）", rec.event) : "")
   }
 }
 
@@ -1333,7 +1346,8 @@ function renderModelInput(index, context) {
   html += `<div class="model-input-body">`
   const systemText = typeof context.system === "string" ? context.system : context.system == null ? "" : jsonText(context.system)
   if (systemText) html += `<details class="input-message"><summary>系统／环境指令（${context.format === "anthropic" ? "system" : "instructions"}）</summary><pre>${escapeHtml(systemText)}</pre></details>`
-  const firstMessage = items.findIndex(item => item.type !== "additional_tools" && (item.type === "message" || item.role))
+  const firstMessage = items.findIndex(item => item.type !== "additional_tools" && (item.type === "message" || item.role)
+    && (context.format !== "chat" || !["system", "developer"].includes(item.role)))
   const descriptions = HarnessEvidence.inputSummary(items)
   for (let n = 0; n < items.length; n++) {
     const item = items[n]
@@ -1805,7 +1819,7 @@ function captureLlmEvent(evt) {
     const tools = Array.isArray(p.tools) ? p.tools : []
     const meta = `${child ? "已知子会话 · " : ""}客户端捕获边界，不计内部迭代 · model=${escapeHtml(p.model ?? "?")}<br>${codex ? "instructions 字段（不是全部指令）" : "system 字段"} ${escapeHtml(p.systemChars ?? "?")} 字符 · ${codex ? "input" : "messages"} ${escapeHtml(p.messages ?? "?")} 项 · tools ${Array.isArray(p.tools) ? tools.length + " 个" : "未随此请求传输／可能继承"}${p.toolsLocation ? " · " + escapeHtml(p.toolsLocation) : ""}<br>${tools.map(t => `<span class="chip">${escapeHtml(typeof t === "string" ? t : jsonText(t))}</span>`).join("")}<br><span class="waiting">等待响应</span>`
     addRecord(node, `#${p.index} ${scope} · ${p.model ?? "?"}`, meta, "llm", { index: p.index, requestSummary: p }, "boundary")
-    addRecord(codex ? "c-context" : child ? "sub" : "loop", `本次发给模型的历史 #${p.index} · ${scope}`,
+    addRecord(codex ? "c-context" : child ? "sub" : "loop", `模型输入中的历史 #${p.index} · ${scope}`,
       "查看实际请求中的任务、已有模型输出与工具结果；不是数据库历史读取函数的逐步跟踪。", "context", p, "boundary")
     if (codex) {
       if (p.sessionID && codexThreadParents.has(p.sessionID))
@@ -1888,13 +1902,13 @@ function processEvent(evt) {
       log(type, "会话更新" + (child ? "（子代理）" : "")); break
     case "message.updated":
       if (p.info?.role === "assistant") {
-        const info = p.info, node = child ? "sub" : "loop"
+        const info = p.info, node = child ? "sub" : info.summary === true ? "subflow2" : "llm"
         const previous = assistantSnapshots.get(info.id)
         assistantSnapshots.set(info.id, info)
         if (!seenAssistantMsgs.has(info.id)) {
           seenAssistantMsgs.add(info.id); pulse(node, 4000); bump(node)
           addRecord(node, `助手消息状态${info.summary ? "（摘要工作）" : ""}`,
-            "message.updated 是消息观测，不是内部 runLoop 迭代计数。summary assistant 表示摘要工作，不证明压缩已完成。", "json", info)
+            "助手消息的生成状态；显示最新快照，列表时间为首次接收。摘要消息属于摘要工作，不单独证明压缩已完成。", "json", info)
         } else updateRec(node, r => r.data?.id === info.id, info)
         if (!child && (!lastFinishInfo || lastFinishInfo.id === info.id || !previous)) lastFinishInfo = info
         if (!child && terminalSessions.has(info.sessionID) && lastFinishInfo.id === info.id && (info.error || info.finish === "error"))
@@ -2161,7 +2175,7 @@ const DOCS = {
 opencode: {
   ui: ocDoc(LESSONS.start, [["server/routes/instance/httpapi/handlers/session.ts", "prompt REST handler", "295-308"]]),
   server: ocDoc({ what: "为任务建立会话，确定工作目录、模型、工具和权限。保存用户要求后，进入智能体处理循环。", example: "以当前项目为工作目录，启用读取、编辑和命令工具，按配置决定哪些操作需要确认。", next: "读取已有历史，准备第一次模型工作。" }, [["session/prompt.ts", "prompt", "1052-1071"], ["session/run-state.ts", "ensureRunning", "88-94"]]),
-  loop: ocDoc({ what: "读取压缩后仍可见的历史，找到最新用户要求、助手状态和待办。它们构成当前任务的工作记忆；项目指令与工具定义在调用模型前才进一步装配。", example: "读取上一轮的文件结果，检查最新要求是否已经得到回应。", next: "先检查请求是否已完成；未完成时取出待办，不直接调用模型。" }, [["session/prompt.ts", "history and task collection", "1088-1098"], ["session/prompt.ts", "late context assembly", "1226-1286"]], "filterCompactedEffect 后确定 latestUser/latestAssistant/latestFinished 和 tasks。消息快照不是循环次数；工作记忆不等于跨任务长期记忆。"),
+  loop: ocDoc({ what: "每轮处理开始时，读取当前会话的有效消息，定位最新用户要求、助手进度和待处理的子任务／压缩标记。发生过压缩时使用摘要和保留消息；没有压缩时读取正常会话消息。", example: "先读取用户问题；工具执行后重新读到文件结果；最终回答保存后，再读取状态并检查要求是否已经得到回应。", next: "先检查请求是否已完成；未完成时处理指定子任务或压缩，再决定是否调用模型。" }, [["session/prompt.ts", "history and task collection", "1088-1098"], ["session/prompt.ts", "late context assembly", "1226-1286"]], "filterCompactedEffect 后确定 latestUser/latestAssistant/latestFinished 和 tasks。tasks 是 compaction/subtask 标记，不是 todowrite 计划。当前未直接采集内部读取函数；运行记录只提供模型输入中的历史参考，份数不是读取次数。工作记忆不等于跨任务长期记忆。"),
   decide: ocDoc({ what: "每轮读取历史后，检查最新请求是否已有可结束的回答。还要结合回答归属与本地工具记录，不能只看一条“完成”文字。", example: "上一条回答已经结束，但它不对应最新用户要求，仍需继续处理。", next: "已完成就退出；未完成先取出待办。此检查与调用模型后的处理结果是两处不同判断。" }, [["session/prompt.ts", "entry exit predicate", "1100-1129"]], "finish 存在且非 tool-calls/unknown，没有符合条件的本地工具 part，且 parentID 对应 latestUser 才 break。工具过滤排除 providerExecuted 及孤立中断。"),
   subflow1: ocDoc({ what: "从已收集的待办中取出一项，区分指定子任务、压缩任务或没有待办。这里不是对所有任务重新排序。", example: "先前安排的摘要标记已成为待办，这一轮取出它并执行；指定子任务也有独立入口。", next: "指定任务执行后直接回循环头；压缩任务执行并检查返回结果；没有待办才检查容量。" }, [["session/prompt.ts", "tasks.pop and three paths", "1142-1168"]], "根据 tasks.pop() 得到的 part.type 分支。SubtaskPart 的观测只证明标记存在，不证明此处已取出或执行。"),
   "pre-sub": ocDoc({ what: "执行已明确指定的子任务，并把管理调用的结果或错误写回父会话。这条入口无需让父模型先提出工具调用。", example: "已指定的检查任务返回结果，父会话写入对应记录。", next: "直接回到循环头重新读取历史，跳过本轮父模型调用及其后续处理判断。" }, [["session/prompt.ts", "handleSubtask", "255-449"], ["session/prompt.ts", "subtask then continue", "1144-1147"]], "handleSubtask 生成 finish=tool-calls 的助手记录，调用 TaskTool 并写回完成/错误。bypassAgentCheck=true 绕过该处代理检查；不等于绕过所有权限。仅有 command 时加合成 user 续接。仅凭 task 工具快照无法证明这条入口。"),

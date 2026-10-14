@@ -166,6 +166,52 @@ test("frontend syntax compiles without execution", () => {
   assert.doesNotThrow(() => new vm.Script(source, { filename: "index.html" }))
 })
 
+test("synthetic: history contains only request-boundary references, while assistant snapshots belong to model/compaction work", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  let first, last
+  for (let index = 1; index <= 4; index++) {
+    const info = { id: "assistant-" + index, sessionID: "root", role: "assistant" }
+    const initial = ui.event("message.updated", { info })
+    if (index === 1) first = initial
+    ui.event("llm.request", { index, sessionID: "root", tools: [] })
+    const final = ui.event("message.updated", { info: { ...info, finish: "stop", tokens: { input: 10 } } })
+    if (index === 1) last = final
+  }
+  assert.equal(ui.read("store.loop.length"), 4)
+  assert(ui.read("store.loop.every(r=>r.kind==='context' && r.evidence==='boundary')"))
+  assert.equal(ui.read("store.llm.filter(r=>r.data.role==='assistant').length"), 4)
+  const rec = ui.read("store.llm.find(r=>r.data.id==='assistant-1')")
+  assert.equal(rec.time, first.receivedAt)
+  assert.equal(rec.updatedAt, last.receivedAt)
+  assert.deepEqual(rec.firstEvent, first)
+  assert.deepEqual(rec.event, last)
+  assert.equal(rec.data.finish, "stop")
+  ui.event("message.updated", { info: { id: "summary", sessionID: "root", role: "assistant", summary: true } })
+  assert.equal(ui.read("store.subflow2[0].data.id"), "summary")
+  assert.equal(ui.read("store.loop.length"), 4)
+  ui.evaluate("selectNode('loop')")
+  assert.match(ui.elements.get("nodeTitle").innerHTML, /4 份模型输入参考/)
+  assert(ui.elements.get("nodePanel").children.some(el => el.textContent.includes("份数不代表读取次数")))
+})
+
+test("synthetic: node cards sort by first reception, keep latest update separately and still focus the correct stable record", async () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  const late = ui.event("codex.item.started", { item: { id: "late", type: "command_execution", command: "late command", status: "in_progress" } }, { receivedAt: "2026-10-04T12:00:03Z" })
+  ui.event("codex.item.completed", { item: { id: "early", type: "command_execution", command: "early command", status: "completed" } }, { receivedAt: "2026-10-04T12:00:02Z" })
+  const updated = ui.event("codex.item.completed", { item: { id: "late", type: "command_execution", command: "late command", status: "completed" } }, { receivedAt: "2026-10-04T12:00:10Z" })
+  ui.evaluate("selectNode('c-tool')")
+  const panel = ui.elements.get("nodePanel")
+  assert.deepEqual(panel.children.map(el => el.dataset.recordSeq), ["2", "1"])
+  assert.equal(ui.read("store['c-tool'][0].time"), late.receivedAt)
+  assert.equal(ui.read("store['c-tool'][0].updatedAt"), updated.receivedAt)
+  assert(panel.children[1].innerHTML.includes("最近更新"))
+  ui.evaluate("focusExecution(execution.entries().findIndex(row=>row.kind==='tool-completed' && row.callID==='early'))")
+  assert(panel.children[0].classList.contains("open"))
+  assert(rawSections(panel.children[0].querySelector(".detail").innerHTML).some(value => value.id === "early"))
+})
+
 test("synthetic: thinking strength follows each native model, hides unsupported toggles and preserves per-harness selection", () => {
   const ui = createFrontend()
   ui.evaluate("modelMenus.opencode=fixture; paintModelMenu()", { defaultModel: "fixture/k3", models: [
@@ -934,6 +980,15 @@ test("synthetic: readable history separates a user task, model tool proposal and
   assert(rendered.includes(longText), "Full returned content is still inspectable")
   assert.deepEqual(call, before)
   assert.deepEqual(JSON.parse(ui.read("requestCache[13]")), call.request)
+})
+
+test("synthetic: Chat history keeps system instructions folded and opens the actual conversation message", () => {
+  const ui = createFrontend()
+  const rendered = ui.evaluate("renderHistory(fixture)", { index: 1, harness: "opencode", protocol: "chat", request: { messages: [
+    { role: "system", content: "SYSTEM_REFERENCE" }, { role: "user", content: "USER_TASK" },
+  ] } })
+  assert.match(rendered, /class="input-message"><summary>1\.[\s\S]*?（system）/)
+  assert.match(rendered, /class="input-message" open><summary>2\.[\s\S]*?（user）/)
 })
 
 test("synthetic: one model response displays both text and proposals, and proposal alone is not tool execution", () => {

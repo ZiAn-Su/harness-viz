@@ -286,16 +286,18 @@ try {
   await evaluate('switchHarness("codex")')
   assert.equal(await evaluate('document.querySelector("#modelSel").value'), "openai/" + results.status.codexModel)
   checks.push("Both harnesses have independent selectable model menus (recorded model-directory replay)")
+  if (opencodeOnly) await evaluate('switchHarness("opencode")')
   await evaluate('setView("input",true)')
   assert(await evaluate('!document.querySelector("#continueControl").hidden && !document.querySelector("#continueCheck").checked && !document.querySelector("#continueCheck").disabled'))
   const conversationRecords = await evaluate('document.querySelector("#llmBadge").textContent')
-  await evaluate('document.querySelector("#continueCheck").click(); switchHarness("opencode")')
+  await evaluate(`document.querySelector("#continueCheck").click(); switchHarness('${opencodeOnly ? "codex" : "opencode"}')`)
   assert.equal(await evaluate('document.querySelector("#continueCheck").checked'), false)
-  await evaluate('switchHarness("codex")')
+  await evaluate(`switchHarness('${opencodeOnly ? "opencode" : "codex"}')`)
   assert.equal(await evaluate('document.querySelector("#continueCheck").checked'), true)
   assert.equal(await evaluate('document.querySelector("#llmBadge").textContent'), conversationRecords)
   await screenshot("continue-conversation-desktop")
   await evaluate('document.querySelector("#continueCheck").click(); setView("input",false)')
+  if (opencodeOnly) await evaluate('switchHarness("codex")')
   checks.push("Continue-current-conversation appears after completion, defaults off and keeps per-harness choice/history (recorded conversations, no submission)")
   const variantFixture = {
     opencode: { source: "synthetic native-variant browser fixture, not recorded inference", defaultModel: "fixture/k3", models: [
@@ -402,7 +404,7 @@ try {
   await evaluate('document.querySelector("[data-h=opencode]").click()')
   await wait(`document.querySelector("#llmBadge")?.textContent === "捕获请求: ${calls.filter(call => call.harness === "opencode").length}"`)
   const originalPrompt = runs.opencode.events.find(event => event.type === "viz.run").properties.prompt
-  assert.equal(await evaluate(`document.querySelectorAll("#transcript .user").length`), 1)
+  assert.equal(await evaluate(`document.querySelectorAll("#transcript .user").length`), runs.opencode.events.filter(event => event.type === "viz.run").length)
   assert(await evaluate(`[...document.querySelectorAll("#transcript .assistant .body")].every(body => body.dataset.rawText !== ${JSON.stringify(originalPrompt)})`))
   checks.push("OpenCode user-message events are not mislabelled as assistant")
   await wait('execution.entries().filter(row=>row.kind === "model-request").length === ' + calls.filter(call => call.harness === "opencode").length)
@@ -452,6 +454,14 @@ try {
   }
   await evaluate('activeTab="records"; selectNode("loop")')
   await wait('document.querySelector("#nodePanel .history-summary") != null')
+  const historyReferences = await evaluate('store.loop.map(rec=>({kind:rec.kind,time:rec.time,index:rec.data.index}))')
+  assert(historyReferences.every(rec => rec.kind === "context"))
+  assert.equal(historyReferences.length, calls.filter(call => call.harness === "opencode" && call.sessionID === runs.opencode.sessionID).length)
+  assert(await evaluate('document.querySelector("#nodeTitle").textContent.includes("份模型输入参考") && document.querySelector("#nodePanel .history-evidence-note").textContent.includes("不代表读取次数") && !document.querySelector("#nodePanel").textContent.includes("助手消息状态")'))
+  assert(await evaluate('(() => { const times=[...document.querySelectorAll("#nodePanel .rec .tm")].map(el=>Date.parse(el.title.replace("首次接收：",""))); return times.every((time,n)=>!n || times[n-1]<=time) })()'))
+  await evaluate('document.querySelectorAll("#nodePanel .rec").forEach(el=>el.classList.remove("open")); document.querySelector("#nodePanel").scrollTop=0')
+  await screenshot("history-reference-overview")
+  checks.push("History lists only request references; assistant states are separate and card times remain chronological first-reception times")
   assert(await evaluate('document.querySelector("#nodePanel .detail").textContent.includes("不是数据库完整历史") || [...document.querySelectorAll("#nodePanel .detail")].some(detail=>detail.textContent.includes("不是数据库完整历史"))'))
   if (opencodeOnly) {
     assert.equal(await evaluate('execution.entries().filter(row=>row.kind==="model-request" && !row.child).length'), calls.filter(call => call.sessionID === runs.opencode.sessionID).length)
@@ -469,7 +479,7 @@ try {
   await screenshot("opencode-readable-history")
   checks.push("Chronological observed execution, main/child filtering, exact tool linkage, readable history and unobserved branches kept unknown")
   await verifyFlowDocs("opencode")
-  await evaluate('document.querySelector("#fn-llm").click(); const firstModelRecord=document.querySelector("#nodePanel .rec"); if(!firstModelRecord.classList.contains("open")) firstModelRecord.querySelector(".hd").click()')
+  await evaluate('document.querySelector("#fn-llm").click(); (()=>{ const rec=store.llm.find(r=>r.kind==="llm"); const div=document.querySelector(`[data-record-seq="${rec.seq}"]`); if(!div.classList.contains("open")) div.querySelector(".hd").click() })()')
   await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
   assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("请求输入")'))
   assert(await evaluate('[...document.querySelectorAll("#nodePanel .input-message")].some(item=>!item.open && item.querySelector("summary").textContent.includes("system"))'))
@@ -514,7 +524,19 @@ try {
   await wait(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] select.template-select option[value="qwen38"]') != null`)
   const previewSignatures = { qwen38: "<|im_start|>", "glm53": "[gMASK]<sop>", "kimi-k3": "<|open|>message" }
   for (const [templateId, signature] of Object.entries(previewSignatures)) {
+    let incompatibility
+    try {
+      await renderTemplatePreview({ modelInput: withModelInputs(calls).find(c => c.index === previewCall.index).modelInput, templateId, call: previewCall })
+    } catch (err) {
+      assert.match(err.message, /不支持|未自动替换/, "Only an explicit template/API option incompatibility is an expected preview rejection")
+      incompatibility = err.message
+    }
     await evaluate(`(() => { const sel = document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] select.template-select'); sel.value = ${JSON.stringify(templateId)}; renderTemplate(${previewCall.index}, sel) })()`)
+    if (incompatibility) {
+      await wait(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output')?.textContent.includes(${JSON.stringify(incompatibility)})`)
+      assert(await evaluate(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .download-rendered').disabled`))
+      continue
+    }
     await wait(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output')?.textContent.includes(${JSON.stringify(signature)})`)
     assert(await evaluate(`document.querySelector('.template-preview[data-preview-index="${previewCall.index}"] .template-output').textContent.includes(${JSON.stringify(originalPrompt.slice(0, 12))})`), "rendered preview must contain the task prompt")
   }
@@ -566,7 +588,7 @@ try {
   assert(await evaluate('document.querySelector("#nodePanel .input-message[open]")?.querySelector("summary").textContent.includes("developer")'))
   const reconstructed = withModelInputs(calls).find(call => call.harness === "codex" && call.modelInput.kind === "reconstructed")
   assert(reconstructed, "Actual native data must include a response-chain continuation")
-  await evaluate(`const targetRecord = store["c-llm"].find(record => record.kind === "llm" && record.data.index === ${reconstructed.index}); document.querySelectorAll("#nodePanel .rec .hd")[store["c-llm"].indexOf(targetRecord)].click()`)
+  await evaluate(`(()=>{ const rec=store["c-llm"].find(record=>record.kind==="llm" && record.data.index===${reconstructed.index}); document.querySelector(\`[data-record-seq="\${rec.seq}"] .hd\`).click() })()`)
   await wait('document.querySelector("#nodePanel")?.textContent.includes("重建上下文（分析结果，非原始请求）")')
   assert.deepEqual(JSON.parse(await evaluate(`requestCache[${reconstructed.index}]`)), reconstructed.request)
   await verifyDownload(reconstructed)
@@ -672,7 +694,7 @@ try {
       await delay(1800)
       await evaluate('document.querySelector("#fn-c-llm").click(); document.querySelector("#nodePanel .rec .hd")?.click()')
       await delay(3200)
-      await evaluate(`const requestRecord = store["c-llm"].find(record => record.kind === "llm" && record.data.index === ${reconstructed.index}); document.querySelectorAll("#nodePanel .rec .hd")[store["c-llm"].indexOf(requestRecord)].click()`)
+      await evaluate(`(()=>{ const rec=store["c-llm"].find(record=>record.kind==="llm" && record.data.index===${reconstructed.index}); document.querySelector(\`[data-record-seq="\${rec.seq}"] .hd\`).click() })()`)
       await delay(3200)
       await evaluate('document.querySelector("#fn-c-llm").click(); document.querySelector("[data-tab=doc]").click()')
       await delay(1800)
