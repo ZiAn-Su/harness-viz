@@ -191,8 +191,11 @@ test("synthetic: history contains only request-boundary references, while assist
   assert.equal(ui.read("store.subflow2[0].data.id"), "summary")
   assert.equal(ui.read("store.loop.length"), 4)
   ui.evaluate("selectNode('loop')")
-  assert.match(ui.elements.get("nodeTitle").innerHTML, /4 份模型输入参考/)
-  assert(ui.elements.get("nodePanel").children.some(el => el.textContent.includes("份数不代表读取次数")))
+  assert.match(ui.elements.get("nodeTitle").innerHTML, /未采集执行记录/)
+  assert.equal(ui.read("store.loop.filter(r=>r.recordType==='execution').length"), 0)
+  assert(!html.includes('data-tab="references"'))
+  assert.equal(ui.read("store.llm.filter(r=>r.recordType==='execution').length"), 4)
+  assert.equal(ui.elements.get("cnt-llm").textContent, "4")
 })
 
 test("synthetic: node cards sort by first reception, keep latest update separately and still focus the correct stable record", async () => {
@@ -210,6 +213,62 @@ test("synthetic: node cards sort by first reception, keep latest update separate
   ui.evaluate("focusExecution(execution.entries().findIndex(row=>row.kind==='tool-completed' && row.callID==='early'))")
   assert(panel.children[0].classList.contains("open"))
   assert(rawSections(panel.children[0].querySelector(".detail").innerHTML).some(value => value.id === "early"))
+})
+
+test("synthetic: one submission with ten lifecycle snapshots cannot appear as ten preparation executions", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.event("session.created", { info: { id: "root" } })
+  for (let n=0;n<5;n++) ui.event("session.updated", { info: { id: "root", model: { id: "k3", providerID: "fixture" }, tokens: { input: n } } })
+  for (let n=0;n<4;n++) ui.event("message.updated", { info: { id: "same-user", role: "user", sessionID: "root", summary: { version: n } } })
+  assert.equal(ui.read("store.server.length"), 10)
+  assert(ui.read("store.server.every(rec=>rec.recordType==='reference')"))
+  ui.evaluate("selectNode('server')")
+  assert.match(ui.elements.get("nodeTitle").innerHTML, /未采集执行记录/)
+  assert.match(ui.elements.get("nodePanel").innerHTML, /未采集到.*实际执行记录/)
+  assert.equal(ui.elements.get("cnt-server").textContent, "0")
+  assert.equal(ui.elements.get("nodePanel").children.filter(el=>el.className==='rec').length, 0)
+  assert.equal(ui.read("logN"), 11, "All ten native updates remain in the raw event log alongside submission")
+})
+
+test("synthetic: preparation progress updates one record and exposes timed input/actions/result details", async () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { prompt: "task", turnNumber: 1 })
+  const execution = { id: "prep-one", nodeID: "server", status: "running", turnNumber: 1,
+    startedAt: "2026-10-14T12:00:00.000Z", endedAt: null, durationMs: null,
+    input: { prompt: "ACTUAL_USER_TASK", projectPath: "actual-project", model: "k3", providerID: "fixture", reasoningEffort: "high", continuing: false, cliVersion: "1.18.34" },
+    steps: [{ id: "session", label: "创建原生会话", status: "running", startedAt: "2026-10-14T12:00:00.000Z", endedAt: null, details: {} }], output: {}, boundary: "actual entry to native receipt" }
+  ui.event("viz.preparation", { execution })
+  execution.status = "completed"; execution.endedAt = "2026-10-14T12:00:00.100Z"; execution.durationMs = 100
+  execution.output = { sessionID: "native-session", messageID: "native-message", confirmation: "本条用户消息已保存到原生会话" }
+  execution.steps[0].status = "completed"
+  ui.event("viz.preparation", { execution })
+  assert.equal(ui.read("store.server.length"), 1)
+  assert.equal(ui.read("store.server[0].recordType"), "execution")
+  assert.equal(ui.elements.get("cnt-server").textContent, "1")
+  assert.equal(ui.read("currentSession"), "native-session")
+  ui.evaluate("selectNode('server')")
+  assert.match(ui.elements.get("nodeTitle").innerHTML, /1 条执行记录/)
+  const card = ui.elements.get("nodePanel").children[0]
+  assert(card.innerHTML.includes("100 ms"))
+  assert.match(card.innerHTML, /\d{2}:\d{2}:\d{2}\.\d{3}/, "Preparation summaries show full local clock times, not just milliseconds")
+  await ui.evaluate("toggleRecDetail(fixture,store.server[0])", card)
+  for (const text of ["本次输入", "实际处理", "本次结果", "ACTUAL_USER_TASK", "actual-project", "创建原生会话", "本条用户消息已保存"]) assert(card.querySelector(".detail").innerHTML.includes(text))
+  assert.equal(ui.read("execution.entries().filter(row=>row.kind.startsWith('preparation-')).length"), 2)
+})
+
+test("synthetic: pending tool metadata becomes one execution record only after the tool starts", () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const part = { id: "part", type: "tool", tool: "read", callID: "call", sessionID: "root", state: { status: "pending", input: {} } }
+  ui.event("message.part.updated", { part })
+  assert.equal(ui.read("store.tool.filter(rec=>rec.recordType==='execution').length"), 0)
+  ui.event("message.part.updated", { part: { ...part, state: { status: "running", input: {} } } })
+  ui.event("message.part.updated", { part: { ...part, state: { status: "completed", input: {}, output: "actual output" } } })
+  assert.equal(ui.read("store.tool.length"), 1)
+  assert.equal(ui.read("store.tool[0].recordType"), "execution")
+  assert.equal(ui.elements.get("cnt-tool").textContent, "1")
+  assert.equal(ui.read("store.tool[0].data.state.output"), "actual output")
 })
 
 test("synthetic: thinking strength follows each native model, hides unsupported toggles and preserves per-harness selection", () => {
@@ -601,7 +660,7 @@ test("synthetic: turn.started counts turns, not API requests, loops or unobserve
   }
   ui.event("codex.turn.completed", { usage: { input_tokens: 5 } })
   assert.equal(ui.read('store["c-server"].length'), 1)
-  assert.equal(ui.elements.get("cnt-c-server").textContent, "1")
+  assert.equal(ui.elements.get("cnt-c-server").textContent, "0", "Native turn-start is reference material, not a full preparation execution")
   assert.equal(ui.read("llmCallCount"), 3)
   assert.equal(ui.read('store["c-llm"].filter(r => r.kind === "llm").length'), 3)
   assert.deepEqual(ui.read('store["c-history"] ?? []'), [], "the same request is not archived twice")
@@ -672,7 +731,7 @@ test("synthetic: OpenCode compaction completion does not count the request marke
   ui.event("message.part.updated", { part })
   ui.event("message.part.updated", { part })
   const completed = ui.event("session.compacted", { sessionID: "root" })
-  assert.equal(ui.elements.get("cnt-schedule").textContent, "1")
+  assert.equal(ui.elements.get("cnt-schedule").textContent, "0", "A persisted marker does not prove that the schedule function ran")
   assert.equal(ui.read("store.schedule.length"), 1)
   assert.equal(ui.read("store.subflow2.length"), 1)
   assert.deepEqual(ui.read("store.subflow2[0].event"), completed)

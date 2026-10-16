@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto"
 import { withModelInputs } from "../src/trace.mjs"
 import { summarizeProxyResponse } from "../src/proxy-response.mjs"
 import { buildCallRecord } from "../src/call-record.mjs"
+import { startPreparation } from "../src/preparation.mjs"
 
 const source = await readFile(new URL("../src/server.mjs", import.meta.url), "utf8")
 function section(start, end = "\n/*") {
@@ -31,7 +32,7 @@ function backend(overrides = {}) {
   const wire = [], persisted = [], fetches = [], ocRequests = [], codexRequests = []
   const context = {
     URL, Buffer, TextDecoder, AbortSignal, randomUUID,
-    withModelInputs, buildCallRecord, summarizeProxyResponse,
+    withModelInputs, buildCallRecord, summarizeProxyResponse, startPreparation,
     requestTools: request => ({ names: (request?.tools ?? []).map(t => t.name ?? t.function?.name) }),
     observedProviderIDs: ["fixture"], codexModel: "fixture/native-codex", nativeOpenCode: null, nativeCodex: null,
     modelCatalogs: { opencode: { models: [{ value: "fixture/model", model: "model", providerID: "fixture", variants: ["low", "high", "max"] }], defaultModel: "fixture/model" },
@@ -320,6 +321,41 @@ test("Codex continuation passes the current explicit thread ID to native resume 
   assert.equal(b.context.runs.codex.events[0].type, "first-turn-evidence")
   assert.equal(b.context.llmCalls[0].index, 10)
   assert.equal(JSON.parse(res.body).sessionID, "thread-own")
+})
+
+test("preparation is one timed execution confirmed by the exact persisted user message, not later session snapshots", async () => {
+  const prompt = deferred()
+  const b = backend({ oc: async route => route === "/session" ? { ok: true, json: async () => ({ id: "prepared-session" }) } : prompt.promise })
+  const res = response()
+  await b.server(request({ body: { prompt: "PREP_TASK", variant: "high" } }), res)
+  const run = b.context.runs.opencode, body = JSON.parse(b.ocRequests[1][1].body)
+  assert.equal(run.preparation.status, "running")
+  assert.equal(run.preparation.input.reasoningEffort, "high")
+  assert.equal(body.messageID, run.preparation.output.messageID)
+  b.broadcast({ type: "message.part.updated", properties: { part: { type: "text", sessionID: "prepared-session", messageID: "msg-old", text: "old" } } })
+  assert.equal(run.preparation.status, "running")
+  b.broadcast({ id: "persisted-user-part", type: "message.part.updated", properties: { part: { id: "part", type: "text", sessionID: "prepared-session", messageID: body.messageID, text: "PREP_TASK" } } })
+  assert.equal(run.preparation.status, "completed")
+  const finish = run.preparation.endedAt
+  b.broadcast({ type: "session.updated", properties: { info: { id: "prepared-session", tokens: { input: 999 } } } })
+  assert.equal(run.preparation.endedAt, finish)
+  assert.equal(new Set(b.events().filter(e=>e.type==='viz.preparation').map(e=>e.properties.execution.id)).size, 1)
+  assert.equal(b.events().findIndex(e=>e.type==='viz.run') < b.events().findIndex(e=>e.type==='viz.preparation'), true)
+  assert(!JSON.stringify(run).includes("preparationTracker"))
+  prompt.resolve({ ok: true, json: async () => ({ info: {} }) }); await new Promise(setImmediate)
+})
+
+test("failed session creation produces a failed preparation with real action details", async () => {
+  const b = backend({ oc: async () => ({ ok: false, status: 503, text: async () => "local session service unavailable" }) })
+  const res = response()
+  await b.server(request(), res)
+  assert.equal(res.statusCode, 502)
+  const preparation = b.context.runs.opencode.preparation
+  assert.equal(preparation.status, "failed")
+  assert(preparation.error.includes("local session service unavailable"))
+  assert(preparation.endedAt && preparation.durationMs >= 0)
+  assert.equal(preparation.steps.at(-1).status, "failed")
+  assert.equal(b.ocRequests.length, 1)
 })
 
 test("Ark proxy forwards the exact body to the coding endpoint rather than the legacy provider", async () => {

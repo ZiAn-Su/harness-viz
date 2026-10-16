@@ -18,6 +18,7 @@ import { prepareExtensions, opencodeExtensions, codexExtensions, installCodexSki
 import { copyNativeCodexHome, discoverCodexModels, nativeOpenCodePaths, nativeOpenCodeProviderIDs, opencodeModelCatalog } from "./native-models.mjs"
 import { summarizeProxyResponse } from "./proxy-response.mjs"
 import { buildCallRecord } from "./call-record.mjs"
+import { startPreparation } from "./preparation.mjs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -167,6 +168,7 @@ function broadcast(payload) {
     if (payload.runID !== run.runID) return
     run.events.push(payload)
     if (run.events.length > 40000) run.events.splice(0, run.events.length - 40000)
+    run.preparationTracker?.observe(payload)
   }
 }
 
@@ -178,6 +180,7 @@ function failOpencode(error) {
   const run = runs.opencode
   if (run.active) {
     run.active = false
+    run.preparationTracker?.fail(error)
     broadcast({ harness: "opencode", runID: run.runID, type: "session.error", source: "viz",
       properties: { sessionID: run.sessionID, error: { name: "SubmissionError", message: error } } })
   }
@@ -542,9 +545,15 @@ async function runCodex(prompt, selected, reasoningEffort, resumeSessionID) {
   let errBuf = ""
   proc.stderr.on("data", (d) => { errBuf += d.toString("utf8"); process.stdout.write(`[codex:err] ${d}`) })
   proc.on("error", (err) => broadcast({ harness: "codex", runID: run.runID, type: "codex.error", properties: { message: err.message } }))
+  proc.on("error", err => run.preparationTracker?.fail(err))
   proc.on("close", async (code, signal) => {
     emitLine(buf + stdoutDecoder.decode())
     await stopCapture()
+    if (run.preparationTracker?.record.status === "running") {
+      if (run.aborted) run.preparationTracker.cancel()
+      else if (code !== 0) run.preparationTracker.fail(new Error(`原生进程在准备完成前退出：${code}`))
+      else run.preparationTracker.unconfirmed()
+    }
     if (codexProc === proc) codexProc = null
     run.active = false
     console.log(`[codex] 进程退出 code=${code} signal=${signal}`)
@@ -939,6 +948,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/run") {
       const { prompt, model, variant, reasoningEffort, continueSessionID, harness = "opencode" } = await readBody(req)
+      const preparationStartedAt = Date.now()
       if (!["codex", "opencode"].includes(harness)) return json(res, { error: "Unknown harness" }, 400)
       if (typeof prompt !== "string" || !prompt.trim()) return json(res, { error: "prompt 不能为空" }, 400)
       if (!cliStatus[harness].available) return json(res, { error: cliStatus[harness].error ?? cliStatus[harness].message, cliStatus: cliStatus[harness] }, 503)
@@ -949,6 +959,7 @@ const server = createServer(async (req, res) => {
       if (!selected) return json(res, { error: "未找到已配置的原生模型；请在原生配置中设置模型并重启后选择。" }, 400)
       if (variant != null && variant !== "" && (harness !== "opencode" || typeof variant !== "string" || !selected.variants?.includes(variant))) return json(res, { error: "未找到该模型已配置的原生变体" }, 400)
       if (reasoningEffort != null && reasoningEffort !== "" && (harness !== "codex" || typeof reasoningEffort !== "string" || !selected.reasoningEfforts?.includes(reasoningEffort))) return json(res, { error: "该模型不支持此思考强度" }, 400)
+      const validatedAt = Date.now()
       if (!continuing) for (let i = llmCalls.length - 1; i >= 0; i--) if ((llmCalls[i].harness ?? "opencode") === harness) llmCalls.splice(i, 1)
       // runID groups this observed conversation; turnNumber counts submitted user inputs,
       // not native loop iterations or model calls. Each turn owns a separate active flag.
@@ -959,31 +970,52 @@ const server = createServer(async (req, res) => {
         configuration: { model: selected.model, providerID: selected.providerID, profile: selected.profile ?? null, variant: variant || null,
           reasoningEffort: (harness === "codex" ? reasoningEffort : variant) || null, captureSource: harness === "codex" ? "native-trace" : "proxy" } }
       admittedRun = runs[harness]
+      broadcast({ id: `run-${randomUUID()}`, harness, conversationTurn: admittedRun.turnNumber, type: "viz.run",
+        properties: { prompt, model: selected.value, configuration: admittedRun.configuration, sessionID: admittedRun.sessionID, continuing, turnNumber: admittedRun.turnNumber } })
+      let preparationRevision = 0
+      const preparationRun = admittedRun
+      const preparation = startPreparation({ harness, runID: admittedRun.runID, turnNumber: admittedRun.turnNumber,
+        startedAt: preparationStartedAt, input: { prompt, projectPath: TARGET_PROJECT, continuing, ...admittedRun.configuration,
+          cliVersion: versions[harness] ?? null }, initialSteps: [{ id: "validate", label: "校验运行参数与模型选择", status: "completed",
+          startedAt: new Date(preparationStartedAt).toISOString(), endedAt: new Date(validatedAt).toISOString(),
+          details: { cliReady: true, selectedModel: selected.value, projectPath: TARGET_PROJECT } }] }, record => {
+        preparationRun.preparation = record
+        broadcast({ id: `preparation-${record.id}-${++preparationRevision}`, harness, runID: preparationRun.runID,
+          conversationTurn: preparationRun.turnNumber, type: "viz.preparation", properties: { execution: record } })
+      })
+      Object.defineProperty(admittedRun, "preparationTracker", { value: preparation })
 
       if (harness === "codex") {
         /* codex exec：一次性进程，prompt 作为参数；事件走 stdout JSONL（exec_events.rs:11）。
          * viz.run 先广播，前端据此清空/重建现场。 */
-        broadcast({ id: `run-${randomUUID()}`, harness: "codex", conversationTurn: admittedRun.turnNumber, type: "viz.run",
-          properties: { prompt, configuration: runs.codex.configuration, sessionID: runs.codex.sessionID, continuing, turnNumber: admittedRun.turnNumber } })
+        preparation.step("native", continuing ? "恢复原生线程并交付本轮输入" : "启动原生客户端并交付用户输入", { threadID: continueSessionID ?? null })
         await runCodex(prompt, selected, reasoningEffort || null, continuing ? continueSessionID : null)
         json(res, { sessionID: runs.codex.sessionID, harness: "codex", continuing, turnNumber: admittedRun.turnNumber })
         return
       }
 
       let session = { id: continueSessionID }
+      preparation.step("session", continuing ? "使用当前原生会话" : "创建原生会话")
       if (!continuing) {
         const created = await oc("/session", {
           method: "POST",
           body: JSON.stringify({ title: "harness-viz " + new Date().toLocaleTimeString("zh-CN") }),
         })
-        if (!created.ok) { runs.opencode.active = false; return json(res, { error: "创建会话失败: " + (await created.text()) }, 502) }
+        if (!created.ok) {
+          const message = "创建会话失败: " + (await created.text())
+          preparation.fail(message); runs.opencode.active = false
+          return json(res, { error: message }, 502)
+        }
         session = await created.json()
       }
       runs.opencode.sessionID = session.id
       opencodeRunIDs.set(session.id, admittedRun.runID)
-      broadcast({ id: `run-${randomUUID()}`, harness: "opencode", conversationTurn: admittedRun.turnNumber, type: "viz.run",
-        properties: { prompt, model: selected.value, configuration: runs.opencode.configuration, sessionID: session.id, continuing, turnNumber: admittedRun.turnNumber } })
-      const body = { parts: [{ type: "text", text: prompt }] }
+      preparation.done("session", { sessionID: session.id })
+      // Public native API messageID is supplied by the caller for exact receipt correlation.
+      const messageID = "msg_" + randomUUID().replaceAll("-", "")
+      preparation.session(session.id, messageID)
+      preparation.step("native", "提交用户输入并等待原生保存确认", { sessionID: session.id, messageID })
+      const body = { messageID, parts: [{ type: "text", text: prompt }] }
       if (variant) body.variant = variant
       body.model = { providerID: selected.providerID, modelID: selected.model }
       // prompt() 会同步跑完整个 runLoop 才返回（遇权限询问会挂起），所以这里
@@ -993,9 +1025,13 @@ const server = createServer(async (req, res) => {
         .then(async (r) => {
           if (!r.ok) throw new Error(`Prompt HTTP ${r.status}: ${await r.text()}`)
           const result = await r.json()
+          if (preparation.record.status === "running") preparation.unconfirmed()
           broadcast({ harness: "opencode", runID: run.runID, conversationTurn: run.turnNumber, type: "viz.prompt.returned", properties: { sessionID: session.id, result } })
         })
-        .catch(err => broadcast({ harness: "opencode", runID: run.runID, type: "session.error", source: "viz", properties: { sessionID: session.id, error: { name: "SubmissionError", message: err.message } } }))
+        .catch(err => {
+          preparation.fail(err)
+          broadcast({ harness: "opencode", runID: run.runID, type: "session.error", source: "viz", properties: { sessionID: session.id, error: { name: "SubmissionError", message: err.message } } })
+        })
         .finally(() => { run.active = false })
       json(res, { sessionID: session.id, continuing, turnNumber: admittedRun.turnNumber })
       return
@@ -1050,6 +1086,7 @@ const server = createServer(async (req, res) => {
       if (harness === "codex") {
         if (!codexProc) return json(res, { ok: true, killed: false })
         runs.codex.aborted = true
+        runs.codex.preparationTracker?.cancel()
         const killed = process.platform === "win32"
           ? spawnSync("taskkill", ["/PID", String(codexProc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).status === 0
           : codexProc.kill()
@@ -1058,6 +1095,7 @@ const server = createServer(async (req, res) => {
       }
       if (!sessionID) return json(res, { error: "缺少 sessionID" }, 400)
       const r = await oc(`/session/${sessionID}/abort`, { method: "POST", body: JSON.stringify({}) })
+      if (r.ok) runs.opencode.preparationTracker?.cancel()
       if (r.ok) broadcast({ harness, type: "viz.abort.accepted", properties: { sessionID } })
       json(res, { ok: r.ok, status: r.status })
       return
@@ -1065,7 +1103,7 @@ const server = createServer(async (req, res) => {
 
     json(res, { error: "Not Found" }, 404)
   } catch (err) {
-    if (admittedRun) admittedRun.active = false
+    if (admittedRun) { admittedRun.preparationTracker?.fail(err); admittedRun.active = false }
     console.error("[viz] 请求处理异常:", err)
     json(res, { error: String(err?.message ?? err) }, 500)
   }

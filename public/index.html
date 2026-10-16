@@ -322,6 +322,14 @@
   .record-meta { padding: 0 12px 10px; font-size: 11px; color: var(--dim); }
   .record-meta summary { cursor: pointer; }
   .record-meta .meta { padding: 8px 0 0; }
+  .preparation-summary { padding: 0 12px 12px; color: var(--dim); font-size: 12px; line-height: 1.8; }
+  .preparation-fields { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px 12px; margin: 10px 0 20px; font-size: 12px; line-height: 1.8; }
+  .preparation-fields dt { color: var(--dim); }
+  .preparation-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .preparation-steps { padding-left: 20px; font-size: 12px; }
+  .preparation-steps li { margin-bottom: 14px; }
+  .preparation-steps p { color: var(--dim); font-size: 11px; overflow-wrap: anywhere; }
+  .preparation-error { color: var(--red); white-space: pre-wrap; overflow-wrap: anywhere; }
   .rec-action { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 500; }
   .model-input { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 14px; }
   select.mini { padding: 2px 6px; font-size: 11px; border-radius: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); margin-left: 6px; max-width: 300px; }
@@ -562,6 +570,15 @@ const HarnessEvidence = (() => {
       }
       const common = { scope, child, sessionID: session }
       const row = (kind, node, title, detail = "", extra = {}) => ({ ...common, kind, node, title, detail, evidence: "direct", ...extra })
+      if (evt.type === "viz.preparation") {
+        const p = evt.properties.execution
+        if (!p) return false
+        const first = p.steps.length === 1 && p.status === "running"
+        if (!first && p.status === "running") return false
+        return add(evt, row(first ? "preparation-start" : "preparation-end", p.nodeID,
+          first ? "运行准备开始" : "运行准备" + ({ completed: "完成", failed: "失败", cancelled: "取消", unconfirmed: "确认未采集" }[p.status] ?? p.status),
+          p.error ?? p.output.confirmation ?? "任务入口参数已校验", { executionID: p.id, sessionID: p.output.sessionID ?? null }), `preparation:${p.id}:${first ? "start" : "end"}`)
+      }
       if (evt.type === "viz.run") return add(evt, row("start", id("ui"), p.continuing ? `继续对话 · 第 ${p.turnNumber ?? "?"} 轮` : "提交任务", short(p.prompt)))
       if (evt.type === "llm.request") return add(evt, row("model-request", child && !cx ? "sub" : id("llm"), `发出模型请求 #${p.index}`,
         `本次输入 ${p.messages ?? "未知"} 项；${Array.isArray(p.tools) ? "可用工具 " + p.tools.length + " 个" : "工具定义未提供"}`,
@@ -919,7 +936,8 @@ function pulse(id, ms = 1800) {
 }
 function bump(id) {
   const c = document.getElementById("cnt-" + id); if (!c) return
-  c.style.display = "inline-block"; c.textContent = (parseInt(c.textContent || "0") + 1)
+  const count = (store[id] ?? []).filter(rec => rec.recordType === "execution").length
+  c.style.display = count ? "inline-block" : "none"; c.textContent = String(count)
 }
 
 /* ═══════════ 节点记录存储 + 双 tab 面板 ═══════════ */
@@ -1063,9 +1081,10 @@ function focusExecution(index) {
   selectNode(row.node)
   document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(el => el.classList.toggle("step-focus", el.dataset.node === row.node))
   const records = store[row.node] ?? []
-  const record = records.find(r => row.index != null ? r.data?.index === row.index
+  const record = records.find(r => row.executionID ? r.data?.id === row.executionID : row.index != null ? r.data?.index === row.index
     : row.callID ? (r.data?.callID ?? r.data?.id ?? r.data?.event?.payload?.tool_call_id) === row.callID : r.event?.id === row.event.id)
   if (record) {
+    if (record.recordType !== "execution") return
     const div = [...document.getElementById("nodePanel").children].find(el => el.dataset.recordSeq === String(record.seq))
     if (div && !div.classList.contains("open")) toggleRecDetail(div, record)
     div?.scrollIntoView?.({ block: "nearest" })
@@ -1095,11 +1114,32 @@ function moveExecution(delta) {
 document.getElementById("previousStep").onclick = () => moveExecution(-1)
 document.getElementById("nextStep").onclick = () => moveExecution(1)
 
+function executionRecord(nodeId, kind, data, evidence, event) {
+  if (kind === "preparation" && event?.type === "viz.preparation") return true
+  if (evidence === "inferred" || kind === "context") return false
+  if (kind === "llm") return true
+  if (["ui", "c-ui"].includes(nodeId) && event?.type === "viz.run") return true
+  if (["tool", "sub", "exec"].includes(nodeId) && data?.type === "tool") return ["running", "completed", "error"].includes(data.state?.status)
+  if (["c-tool", "c-sub", "c-feedback"].includes(nodeId) && ["command_execution", "file_change", "mcp_tool_call", "collab_tool_call", "web_search"].includes(data?.type)) return true
+  if (["sandbox", "c-sandbox"].includes(nodeId) && ["permission.asked", "permission.replied"].includes(event?.type)) return true
+  if (nodeId === "subflow2" && event?.type === "session.compacted") return true
+  if (nodeId === "done" && event?.type === "viz.prompt.returned") return true
+  if (nodeId === "c-done" && ["codex.turn.completed", "codex.turn.failed"].includes(event?.type)) return true
+  return false
+}
+function recordTitle() {
+  const list = store[selectedNode] ?? []
+  const executions = list.filter(rec => rec.recordType === "execution").length
+  const count = executions ? `${executions} 条执行记录` : "未采集执行记录"
+  document.getElementById("nodeTitle").innerHTML = `${nodeNames()[selectedNode]} <span class="sub">— ${count}</span>`
+}
 function addRecord(nodeId, title, meta, kind, data, evidence = "direct") {
   const list = store[nodeId] ??= []
   const rec = { seq: list.length + 1, time: currentEvent ? currentEvent.receivedAt ?? "receivedAt 未提供" : now(), title, meta, kind, data,
-    evidence, source: currentEvent ? currentEvent.source ?? currentEvent.properties?.source ?? "未标注" : "viz", firstEvent: currentEvent, event: currentEvent }
+    evidence, recordType: executionRecord(nodeId, kind, data, evidence, currentEvent) ? "execution" : "reference",
+    source: currentEvent ? currentEvent.source ?? currentEvent.properties?.source ?? "未标注" : "viz", firstEvent: currentEvent, event: currentEvent }
   list.push(rec)
+  bump(nodeId)
   if (nodeId === selectedNode && activeTab === "records") renderRecords()
   const el = document.getElementById("fn-" + nodeId)
   if (el && nodeId !== selectedNode) el.classList.add("unread")
@@ -1114,6 +1154,8 @@ function updateRec(nodeId, pred, patch) {
     rec.event = currentEvent
     rec.updatedAt = currentEvent.receivedAt ?? "receivedAt 未提供"
   }
+  rec.recordType = executionRecord(nodeId, rec.kind, patch, rec.evidence, rec.event) ? "execution" : "reference"
+  bump(nodeId)
   if (nodeId === selectedNode && activeTab === "records") renderRecords()
 }
 let lastFinishInfo = null   // 最后一次 assistant finish 信息，用于「退出循环」记录的输出
@@ -1127,16 +1169,11 @@ function selectNode(id) {
     renderExecution()
   }
   selectedNode = id
-  if (["loop", "c-context"].includes(id)) {
-    const context = store[id]?.findLast(r => r.kind === "context")
-    if (context) openRecords.add(id + ":" + context.seq)
-  }
   document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(e => {
     e.classList.toggle("selected", e.dataset.node === id)
     if (e.dataset.node === id) e.classList.remove("unread")   // 清除"有新记录"圆点
   })
-  document.getElementById("nodeTitle").innerHTML =
-    `${nodeNames()[id]} <span class="sub">— ${store[id]?.length ?? 0} ${id === "loop" ? "份模型输入参考" : "条记录"}</span>`
+  recordTitle()
   renderPanel()
 }
 document.querySelectorAll(".fnode,.fdia,.zone-label").forEach(el => el.onclick = () => { setView("details", true); selectNode(el.dataset.node) })
@@ -1145,29 +1182,27 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t))
   renderPanel()
 })
-function renderPanel() { activeTab === "records" ? renderRecords() : renderDoc() }
+function renderPanel() {
+  document.querySelectorAll(".tab").forEach(tab => tab.classList.toggle("on", tab.dataset.tab === activeTab))
+  if (activeTab === "records") renderRecords()
+  else renderDoc()
+}
 
 function renderRecords() {
-  const list = [...(store[selectedNode] ?? [])].sort((a, b) => {
+  const list = (store[selectedNode] ?? []).filter(rec => rec.recordType === "execution").sort((a, b) => {
     const first = Date.parse(a.time), second = Date.parse(b.time)
     return (Number.isNaN(first) ? Infinity : first) - (Number.isNaN(second) ? Infinity : second) || a.seq - b.seq
   })
-  document.getElementById("nodeTitle").innerHTML =
-    `${nodeNames()[selectedNode]} <span class="sub">— ${list.length} ${selectedNode === "loop" ? "份模型输入参考" : "条记录"}</span>`
+  recordTitle()
   const panel = document.getElementById("nodePanel")
   if (!list.length) {
     const childTools = selectedNode === "tool" ? execution.entries().filter(r => r.relatedNode === "tool" && r.child) : []
     panel.innerHTML = childTools.length
       ? `<p class="readable-note">这些普通工具由子会话执行，记录归在“管理子任务”，不是父会话的普通工具分支。点击下面的记录定位对应子任务。</p>` + childTools.map(r => `<button class="execution-row child" onclick="focusExecution(${execution.entries().indexOf(r)})"><b>${escapeHtml(r.title)}</b><span class="step-detail">${escapeHtml(r.scope)} · ${escapeHtml(r.detail)}</span></button>`).join("")
-      : `<div class="empty">没有直接运行记录，不表示这一步未执行。内部判断未逐步跟踪，可切换「节点说明」了解机制。</div>`
+      : `<div class="empty execution-unavailable">未采集到“${escapeHtml(nodeNames()[selectedNode])}”的实际执行记录。节点工作可在“节点说明”查看；原始事件保留在下方事件日志中。</div>`
     return
   }
   panel.innerHTML = ""
-  if (selectedNode === "loop") {
-    const notice = document.createElement("p"); notice.className = "readable-note history-evidence-note"
-    notice.textContent = "未直接采集会话存储的读取事件。下面是各次模型输入中的历史参考，份数不代表读取次数。"
-    panel.appendChild(notice)
-  }
   for (const [position, rec] of list.entries()) {
     const div = document.createElement("div"); div.className = "rec"
     div.dataset.recordSeq = String(rec.seq)
@@ -1177,6 +1212,12 @@ function renderRecords() {
       <details class="record-meta"><summary>${{ direct: "事件", boundary: "请求", inferred: "推断" }[rec.evidence]} · ${escapeHtml(rec.source)}</summary>
       ${updated}${rec.meta ? `<div class="meta">${rec.meta}</div>` : ""}</details>
       <div class="detail"><div class="waiting">展开加载中…</div></div>`
+    if (rec.kind === "preparation") {
+      const p = rec.data
+      const status = { running: "准备中", completed: "已完成", failed: "失败", cancelled: "已取消", unconfirmed: "确认未采集" }[p.status] ?? p.status
+      const clock = value => value ? new Date(value).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 }) : "—"
+      div.innerHTML = `<div class="hd"><span class="idx">${position + 1}</span><b>第 ${p.turnNumber} 次运行准备</b><span class="chip">${escapeHtml(status)}</span><span class="tm">${escapeHtml(clock(p.startedAt))}</span><span class="rec-action">查看执行详情</span></div><div class="meta preparation-summary">开始 ${escapeHtml(clock(p.startedAt))} · 结束 ${escapeHtml(clock(p.endedAt))} · 耗时 ${p.durationMs == null ? "—" : escapeHtml(p.durationMs) + " ms"}<br>${escapeHtml(p.error ?? p.output.confirmation ?? p.steps.findLast(s=>s.status==='running')?.label ?? "正在准备任务")}</div><div class="detail"></div>`
+    }
     div.querySelector(".hd").onclick = () => toggleRecDetail(div, rec)
     panel.appendChild(div)
     if (openRecords.has(selectedNode + ":" + rec.seq)) toggleRecDetail(div, rec)
@@ -1191,7 +1232,9 @@ async function toggleRecDetail(div, rec) {
   else openRecords.delete(key)
   const detail = div.querySelector(".detail")
   if (!div.classList.contains("open")) return
-  if (rec.kind === "llm" || rec.kind === "context") {
+  if (rec.kind === "preparation") {
+    detail.innerHTML = renderPreparation(rec.data)
+  } else if (rec.kind === "llm" || rec.kind === "context") {
     const revision = llmRevision
     try {
       const res = await fetch("/api/llm-calls", { cache: "no-store" })
@@ -1215,6 +1258,7 @@ async function toggleRecDetail(div, rec) {
 }
 
 function renderDoc() {
+  recordTitle()
   const node = mechanismFocus?.node ?? selectedNode
   document.getElementById("nodePanel").innerHTML = (mechanismFocus ? '<p class="readable-note">当前查看紫色源码阶段：说明该阶段的机制，不表示已采集到这次执行的函数时间或判断结果。</p>' : "") + `<div class="doc">${DOCS[harness][node] ?? "暂无说明"}</div>`
 }
@@ -1235,6 +1279,14 @@ function capturedContext(c) {
     kind: c.anthropicRequest ? "upstream" : c.source === "native-trace" ? "trace" : "forwarded",
      originalText: typeof raw === "string", previousResponseID: input.previous_response_id ?? null }
   return { context, original, payload }
+}
+
+function renderPreparation(p) {
+  const value = x => escapeHtml(x == null ? "未采集" : String(x))
+  const time = x => x ? new Date(x).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hour12: false }) : null
+  const rows = pairs => `<dl class="preparation-fields">${pairs.map(([key,v])=>`<dt>${key}</dt><dd>${value(v)}</dd>`).join("")}</dl>`
+  const labels = { running: "进行中", completed: "已完成", failed: "失败", cancelled: "已取消", unconfirmed: "未确认" }
+  return `<section class="preparation-detail"><h4>执行信息</h4>${rows([["状态",labels[p.status]],["开始（本地）",time(p.startedAt)],["结束（本地）",time(p.endedAt)],["耗时",p.durationMs == null ? null : p.durationMs+" ms"],["用户轮次",p.turnNumber]])}<h4>本次输入</h4>${rows([["任务",p.input.prompt],["工作目录",p.input.projectPath],["模型",p.input.providerID+" / "+p.input.model],["请求强度",p.input.reasoningEffort ?? "跟随原生配置"],["会话方式",p.input.continuing ? "继续当前会话" : "新建会话"],["客户端版本",p.input.cliVersion]])}<h4>实际处理</h4><ol class="preparation-steps">${p.steps.map(s=>`<li><b>${value(s.label)}</b><span class="chip">${value(labels[s.status])}</span><p>${value(time(s.startedAt))} → ${value(time(s.endedAt))}</p>${rawDetail("该动作的实际结果",s.details)}</li>`).join("")}</ol><h4>本次结果</h4>${p.error ? `<p class="preparation-error">${value(p.error)}</p>` : `<p>${value(p.output.confirmation ?? "尚未收到原生接收确认")}</p>`}${rows([["会话／线程",p.output.sessionID],["用户消息",p.output.messageID]])}<details class="raw"><summary>技术详情 · 执行边界与原始数据</summary><p>${value(p.boundary)}。时间采用采集端时钟；这是任务入口动作及原生接收边界的采集，不是CLI内部所有初始化函数的逐函数追踪。</p><pre>${escapeHtml(jsonText(p))}</pre></details></section>`
 }
 function renderHistory(c) {
   const { context } = capturedContext(c)
@@ -1844,6 +1896,24 @@ function processEvent(evt) {
   const { type, properties: p = {} } = evt
   if (type === "sync") return
   captureExecution(evt)
+  if (type === "viz.preparation") {
+    const execution = p.execution
+    if (!execution?.id) return
+    if (execution.output?.sessionID) {
+      currentSession = rootByHarness[harness] = execution.output.sessionID
+      document.getElementById("sessionLabel").textContent = "会话 " + currentSession.slice(-8)
+    }
+    const previous = store[execution.nodeID]?.find(rec=>rec.kind==='preparation' && rec.data.id===execution.id)
+    if (previous) updateRec(execution.nodeID, rec=>rec.data.id===execution.id, execution)
+    else {
+      addRecord(execution.nodeID, "运行准备", "由实际任务入口动作和原生接收确认采集。", "preparation", execution)
+      const rec = store[execution.nodeID].at(-1); rec.time = execution.startedAt
+    }
+    if (["failed", "cancelled"].includes(execution.status)) setRun(execution.status === "cancelled" ? "interrupted" : "failed")
+    if (selectedNode === execution.nodeID && activeTab === "records") renderRecords()
+    flushSessionEvents()
+    return
+  }
   if (type === "viz.abort.accepted") {
     setRun("interrupted")
     addRecord(harness === "codex" ? "c-done" : "done", "本地中断请求已接受", "直接本地 API 操作，不是进程 close 或任务正确性证明。", "json", p)
@@ -1893,12 +1963,10 @@ function processEvent(evt) {
 
     /* ── opencode 真实事件 ── */
     case "session.created":
-      pulse(child ? "sub" : "server")
       addRecord(child ? "sub" : "server", (child ? "子会话创建 " : "会话创建 ") + (p.info?.id ?? ""), `parentID=${p.info?.parentID ?? "-"}`, "json", p)
       log(type, "会话创建 " + (p.info?.id ?? ""), "ok"); break
     case "session.updated":
-      pulse(child ? "sub" : "server")
-      if (p.info?.model) addRecord(child ? "sub" : "server", "会话配置更新", `agent=${p.info.agent ?? "-"} model=${p.info.model?.id ?? "-"}（${p.info.model?.providerID ?? "-"}）`, "json", p)
+      if (p.info?.model) addRecord(child ? "sub" : "server", "会话快照更新", "事件携带当前会话快照；出现model字段不表示模型配置发生变更，不是运行准备的执行记录。", "json", p)
       log(type, "会话更新" + (child ? "（子代理）" : "")); break
     case "message.updated":
       if (p.info?.role === "assistant") {
@@ -1906,7 +1974,7 @@ function processEvent(evt) {
         const previous = assistantSnapshots.get(info.id)
         assistantSnapshots.set(info.id, info)
         if (!seenAssistantMsgs.has(info.id)) {
-          seenAssistantMsgs.add(info.id); pulse(node, 4000); bump(node)
+          seenAssistantMsgs.add(info.id)
           addRecord(node, `助手消息状态${info.summary ? "（摘要工作）" : ""}`,
             "助手消息的生成状态；显示最新快照，列表时间为首次接收。摘要消息属于摘要工作，不单独证明压缩已完成。", "json", info)
         } else updateRec(node, r => r.data?.id === info.id, info)
@@ -1916,7 +1984,7 @@ function processEvent(evt) {
         if (info.finish && info.finish !== previous?.finish)
           addRecord(child ? "sub" : "decide", `观测 finish=${info.finish}`, "不能只用 finish 推定 break：还需本地工具 parts 和 latest user 归属；错误也不总写 finish=error。", "json", info)
       } else if (p.info?.role === "user") {
-        addRecord(child ? "sub" : "server", "user 消息记录", "已持久化的消息快照；也可能是压缩后的内部续接消息。", "json", p.info)
+        addRecord(child ? "sub" : "server", "用户消息快照", "同一消息可多次更新；不是新增用户输入，也不是运行准备执行次数。", "json", p.info)
       }
       break
     case "message.part.delta": {
@@ -1965,12 +2033,12 @@ function processEvent(evt) {
         appendText(key, text, part.type, child)
         if (bubbles[key]) setMarkdown(bubbles[key], text)
       } else if (part.type === "step-start") {
-        pulse(child ? "sub" : "loop", 2000)
+        log(type, "原生模型处理阶段开始；不作为历史读取的执行事件")
       }
       break
     }
     case "session.status":
-      if (p.status?.type === "busy") { if (!child) setRun("busy"); terminalSessions.delete(p.sessionID); pulse(child ? "sub" : "loop", 3000) }
+      if (p.status?.type === "busy") { if (!child) setRun("busy"); terminalSessions.delete(p.sessionID) }
       if (p.status?.type === "idle") endSession(p, child)
       if (p.status?.type === "retry") {
         pulse(child ? "sub" : "llm")
@@ -1985,6 +2053,9 @@ function processEvent(evt) {
       pulse(child ? "sub" : "subflow2")
       addRecord(child ? "sub" : "subflow2", "session.compacted 报告压缩完成", "报告完成，不反推主动/溢出/手动分支。", "json", p)
       log(type, "会话压缩完成", "warn"); break
+    case "viz.prompt.returned":
+      addRecord("done", "原生处理函数返回", "已收到本次原生消息处理接口的返回结果；按返回边界记录，不推算内部判断次数。", "json", p)
+      break
     case "session.error":
       sessionErrors.set(p.sessionID, p.error ?? p)
       if (!child && p.error?.name === "SubmissionError") setRun("failed")
