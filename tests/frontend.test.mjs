@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util"
 // Synthetic frontend units, not browser/layout verification or live integration.
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8")
 const flowSource = await readFile(new URL("../public/flows.js", import.meta.url), "utf8")
+const executionSource = await readFile(new URL("../public/execution-records.js", import.meta.url), "utf8")
 const flowMarkup = vm.runInNewContext(flowSource + '; HarnessFlows.render("opencode") + HarnessFlows.render("codex")')
 const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].filter(match => match[1].trim())
 assert.equal(scripts.length, 1, "expected one inline frontend script")
@@ -55,7 +56,7 @@ class Element {
   set textContent(value) { this.innerHTML = escapeText(value ?? ""); this.text = String(value ?? "") }
   get textContent() { return this.text }
   querySelector(selector) {
-    assert.match(selector, /^\.(body|hd|detail)$/u, "unsupported synthetic DOM selector")
+    assert.match(selector, /^\.(body|hd|detail|execution-state|history-snapshot|history-picker)$/u, "unsupported synthetic DOM selector")
     const name = selector.slice(1)
     assert.ok(new RegExp(`class="[^"\\n]*\\b${name}\\b`).test(this.markup), `missing rendered ${selector} slot`)
     if (!this.slots.has(selector)) {
@@ -129,6 +130,7 @@ function createFrontend(harness = "opencode") {
     return vm.runInContext(code, context, { timeout: 1000 })
   }
   new vm.Script(flowSource, { filename: "flows.js:synthetic-unit" }).runInContext(context, { timeout: 1000 })
+  new vm.Script(executionSource, { filename: "execution-records.js:synthetic-unit" }).runInContext(context, { timeout: 1000 })
   new vm.Script(unitSource, { filename: "index.html:synthetic-unit" }).runInContext(context, { timeout: 1000 })
   evaluate(`harness=${JSON.stringify(harness)}; activeTab="records"; selectedNode=${JSON.stringify(harness === "codex" ? "c-llm" : "llm")}`)
   return {
@@ -269,6 +271,123 @@ test("synthetic: pending tool metadata becomes one execution record only after t
   assert.equal(ui.read("store.tool[0].recordType"), "execution")
   assert.equal(ui.elements.get("cnt-tool").textContent, "1")
   assert.equal(ui.read("store.tool[0].data.state.output"), "actual output")
+})
+
+test("synthetic: tool and permission execution details share the approved input/work/result structure", async () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  const part = { id: "part", type: "tool", tool: "read", callID: "call", sessionID: "root", state: { status: "running", input: { path: "README.md" }, time: { start: 1000 } } }
+  ui.event("message.part.updated", { part })
+  ui.event("message.part.updated", { part: { ...part, state: { ...part.state, status: "completed", output: "ACTUAL_TOOL_RESULT", time: { start: 1000, end: 1700 } } } })
+  ui.evaluate("selectNode('tool')")
+  const panel = ui.elements.get("nodePanel")
+  assert.equal(panel.children.length, 1)
+  assert(panel.children[0].innerHTML.includes("700 ms"))
+  await ui.evaluate("toggleRecDetail(fixture,store.tool[0])", panel.children[0])
+  for (const text of ["执行信息", "本次输入", "实际处理", "本次结果", "README.md", "ACTUAL_TOOL_RESULT"]) assert(panel.children[0].querySelector(".detail").innerHTML.includes(text))
+  ui.event("permission.asked", { id: "perm", sessionID: "root", permission: "edit", patterns: ["target"] })
+  ui.event("permission.replied", { requestID: "perm", sessionID: "root", reply: "once" })
+  assert.equal(ui.read("store.sandbox.length"), 1)
+  ui.evaluate("selectNode('sandbox')")
+  await ui.evaluate("toggleRecDetail(fixture,store.sandbox[0])", panel.children[0])
+  assert(panel.children[0].querySelector(".detail").innerHTML.includes("等待并记录用户答复"))
+})
+
+test("synthetic: native compaction request updates merge by explicit request ID and stay in phase-neutral context", async () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  ui.event("codex.trace", { event: { wall_time_unix_ms: 1000, payload: { type: "compaction_request_started", compaction_request_id: "request", compaction_id: "job", thread_id: "thread", model: "fixture" } }, payloads: { request_payload: { instructions: "ORIGINAL_CONTEXT" } } })
+  ui.event("codex.trace", { event: { wall_time_unix_ms: 2000, payload: { type: "compaction_request_completed", compaction_request_id: "request", compaction_id: "job" } }, payloads: { response_payload: { summary: "ACTUAL_SUMMARY" } } })
+  assert.equal(ui.read("store['c-context'].length"), 1)
+  assert.equal(ui.read("store['c-context'][0].recordType"), "execution")
+  assert.equal(ui.read("store['c-compact']"), undefined)
+  ui.evaluate("selectNode('c-context')")
+  const card = ui.elements.get("nodePanel").children[0]
+  await ui.evaluate("toggleRecDetail(fixture,store['c-context'][0])", card)
+  assert(card.querySelector(".detail").innerHTML.includes("ORIGINAL_CONTEXT"))
+  assert(card.querySelector(".detail").innerHTML.includes("ACTUAL_SUMMARY"))
+  assert(card.innerHTML.includes("1000 ms"))
+})
+
+test("synthetic: cancelled model inference is displayed as cancellation rather than task failure", () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run")
+  ui.event("llm.request", { index: 1, model: "fixture", tools: [], startedAt: 1000 })
+  ui.event("llm.response", { index: 1, endedAt: 1500, terminalType: "inference_cancelled", error: "response consumer dropped", toolCalls: [], usage: null })
+  ui.evaluate("selectNode('c-llm')")
+  assert(ui.elements.get("nodePanel").children[0].innerHTML.includes("已取消"))
+  assert.equal(ui.read("runState"), "busy")
+})
+
+test("synthetic: learner-facing tool and permission details expose actual values without opening raw JSON", async () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root", prompt: "Read the configuration" })
+  const part = { id: "read-part", type: "tool", tool: "read", callID: "read-call", sessionID: "root", state: {
+    status: "completed", input: { filePath: "settings.conf", offset: 2, limit: 10 }, time: { start: 1000, end: 1100 },
+    output: "<path>settings.conf</path>\n<type>file</type>\n<content>2: enabled=true\n3: mode=demo</content>" } }
+  ui.event("message.part.updated", { part })
+  ui.evaluate("selectNode('tool')")
+  const card = ui.elements.get("nodePanel").children[0]
+  await ui.evaluate("toggleRecDetail(fixture,store.tool[0])", card)
+  const readable = card.querySelector(".detail").innerHTML.split('<details class="raw">')[0]
+  for (const expected of ["读取文件", "目标文件", "settings.conf", "起始位置", "enabled=true", "mode=demo"]) assert(readable.includes(expected), expected)
+  assert.doesNotMatch(readable, /&lt;path&gt;|&quot;filePath&quot;|"filePath":/)
+  ui.event("permission.asked", { id: "permission", sessionID: "root", permission: "edit", patterns: ["settings.conf"] })
+  ui.event("permission.replied", { requestID: "permission", sessionID: "root", reply: "once" })
+  ui.evaluate("selectNode('sandbox')")
+  const permission = ui.elements.get("nodePanel").children[0]
+  await ui.evaluate("toggleRecDetail(fixture,store.sandbox[0])", permission)
+  const visible = permission.querySelector(".detail").innerHTML.split('<details class="raw">')[0]
+  assert(visible.includes("修改文件") && visible.includes("允许这一次操作"))
+})
+
+test("synthetic: history node shows only requirement and progress, without payload clutter or invented read executions", async () => {
+  const ui = createFrontend()
+  ui.event("viz.run", { sessionID: "root" })
+  ui.setCalls([{ index: 3, harness: "opencode", runID: "synthetic-run", sessionID: "root", protocol: "chat", request: { messages: [
+    { role: "user", content: "ACTUAL_USER_REQUIREMENT" }, { role: "assistant", content: "ACTUAL_PRIOR_ANSWER" },
+    { role: "tool", tool_call_id: "call", content: "BULKY_TOOL_OUTPUT_SHOULD_STAY_IN_TOOL_DETAIL" } ] } },
+    { index: 3, harness: "codex", runID: "synthetic-run", request: { input: [{ role: "user", content: "FOREIGN_THREAD" }] } }])
+  ui.event("llm.request", { index: 3, sessionID: "root", model: "fixture", tools: [] })
+  ui.evaluate("selectNode('loop')")
+  await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(ui.read("store.loop.filter(r=>r.recordType==='execution').length"), 0)
+  assert.equal(ui.elements.get("cnt-loop").textContent, "0")
+  const section = ui.elements.get("nodePanel").children.find(child=>child.className === "history-evidence")
+  assert(section)
+  const snapshot = section.querySelector(".history-snapshot").innerHTML
+  for (const text of ["内部读取日志尚未采集", "用户要求", "助手已有进度", "ACTUAL_USER_REQUIREMENT", "ACTUAL_PRIOR_ANSWER"]) assert(snapshot.includes(text), text)
+  for (const text of ["FOREIGN_THREAD", "BULKY_TOOL_OUTPUT", "history-message", "工具参数", "退出码"]) assert(!snapshot.includes(text), text)
+  const native = ui.evaluate("renderHistorySnapshot(fixture)", { index: 4, harness: "codex", source: "native-trace", request: { previous_response_id: "missing", input: [
+    { type: "function_call_output", call_id: "unlinked", output: [{ type: "input_text", text: JSON.stringify({ exit_code: 1, output: "UNKNOWN_OUTPUT" }) }] },
+  ] } })
+  assert(native.includes("没有可确认的用户要求或助手进度") && native.includes("增量内容"))
+  assert(!native.includes("UNKNOWN_OUTPUT") && !native.includes('"exit_code":'))
+  ui.evaluate("globalThis.HarnessExecutions=undefined; selectNode('loop')")
+  const unavailable = ui.elements.get("nodePanel").children.find(child=>child.className === "history-evidence")
+  assert(unavailable.innerHTML.includes("可读详情组件未加载") && unavailable.innerHTML.includes("先导出"))
+})
+
+test("synthetic: Codex return shows task, command result and only the same turn's explicitly associated answer", async () => {
+  const ui = createFrontend("codex")
+  ui.event("viz.run", { sessionID: "thread", prompt: "FIRST_TASK", turnNumber: 1 }, { conversationTurn: 1 })
+  ui.event("codex.item.completed", { item: { id: "answer", type: "agent_message", text: "FIRST_ANSWER" } }, { conversationTurn: 1 })
+  ui.event("codex.turn.completed", { usage: { input_tokens: 20, output_tokens: 5 } }, { conversationTurn: 1 })
+  ui.event("viz.run", { sessionID: "thread", prompt: "SECOND_TASK", turnNumber: 2, continuing: true }, { conversationTurn: 2 })
+  ui.event("codex.item.completed", { item: { id: "command", type: "command_execution", command: "npm test", status: "completed", exit_code: 1, aggregated_output: "ACTUAL_FAILURE_OUTPUT" } }, { conversationTurn: 2 })
+  ui.event("codex.item.completed", { item: { id: "answer", type: "agent_message", text: "SECOND_ANSWER" } }, { conversationTurn: 2 })
+  ui.event("codex.turn.completed", { usage: { input_tokens: 30, output_tokens: 9 } }, { conversationTurn: 2 })
+  ui.evaluate("selectNode('c-tool')")
+  let card = ui.elements.get("nodePanel").children[0]
+  await ui.evaluate("toggleRecDetail(fixture,store['c-tool'][0])", card)
+  let body = card.querySelector(".detail").innerHTML.split('<details class="raw">')[0]
+  for (const value of ["npm test", "非零退出码", "ACTUAL_FAILURE_OUTPUT"]) assert(body.includes(value), value)
+  ui.evaluate("selectNode('c-done')")
+  card = ui.elements.get("nodePanel").children[1]
+  await ui.evaluate("toggleRecDetail(fixture,store['c-done'][1])", card)
+  body = card.querySelector(".detail").innerHTML.split('<details class="raw">')[0]
+  for (const value of ["SECOND_TASK", "SECOND_ANSWER", "输出 token"]) assert(body.includes(value), value)
+  assert(!body.includes("FIRST_ANSWER") && !body.includes("FIRST_TASK"))
 })
 
 test("synthetic: thinking strength follows each native model, hides unsupported toggles and preserves per-harness selection", () => {
@@ -701,8 +820,9 @@ test("synthetic: permission interaction stays usable in the environment without 
   assert.deepEqual(ui.read("store.sandbox[0].event"), ask)
   const reply = { sessionID: "root", requestID: "permission-1", reply: "once" }
   const event = ui.event("permission.replied", reply)
-  assert.deepEqual(ui.read("store.sandbox[1].data"), reply)
-  assert.deepEqual(ui.read("store.sandbox[1].event"), event)
+  assert.equal(ui.read("store.sandbox.length"), 1, "A permission reply completes the same interaction")
+  assert.deepEqual(ui.read("store.sandbox[0].data"), reply)
+  assert.deepEqual(ui.read("store.sandbox[0].event"), event)
   assert.equal(ui.elements.get("permModal").classList.contains("show"), false)
   assert.deepEqual(ui.read("store.tool ?? []"), [], "an approval does not prove tool execution")
   const retry = { sessionID: "root", status: { type: "retry", attempt: 2, action: "retry", next: 1791193123000, message: "temporary error" } }
@@ -945,6 +1065,10 @@ for (const harness of ["opencode", "codex"]) {
     assert.doesNotMatch(pending.querySelector(".detail").innerHTML, /completion-marker/)
     ui.setCalls([{ index: 9, harness, request: { input: [], messages: [] }, rawResponse: { output_items: [{ text: "completion-marker" }] }, response: { text: "completion-marker", stopReason: null, usage: {} } }])
     const response = ui.event("llm.response", { index: 9, sessionID: "root", ms: 10, toolCalls: [], textChars: 17, usage: {} })
+    const completed = ui.read(`HarnessExecutions.fromRecord(store[${JSON.stringify(node)}][0], ${JSON.stringify(node)})`)
+    assert.equal(completed.status, "completed")
+    assert.equal(completed.observations.lastReceivedAt, response.receivedAt)
+    assert.equal(ui.read(`store[${JSON.stringify(node)}][0].updatedAt`), response.receivedAt)
     await new Promise(resolve => setImmediate(resolve))
     const refreshed = panel.children[0]
     assert.notEqual(refreshed, pending)
@@ -956,6 +1080,25 @@ for (const harness of ["opencode", "codex"]) {
     assert.ok(rawSections(detail).some(section => isDeepStrictEqual(section, response)))
     assert.ok(ui.fetches.length >= 2, "completion must fetch fresh detail rather than reuse pending data")
     assert.ok(ui.fetches.every(fetch => fetch.options.cache === "no-store"))
+  })
+
+  test(`synthetic: ${harness} closed model card discards stale partial output when the terminal notification arrives`, async () => {
+    const ui = createFrontend(harness)
+    const node = harness === "codex" ? "c-llm" : "llm"
+    ui.event("viz.run", { sessionID: "root" })
+    ui.setCalls([{ index: 9, harness, request: { input: [], messages: [] }, response: { text: "partial-marker" } }])
+    ui.event("llm.request", { index: 9, sessionID: "root", model: "fixture", tools: [] })
+    const pending = ui.elements.get("nodePanel").children[0]
+    await ui.evaluate(`toggleRecDetail(fixture, store[${JSON.stringify(node)}][0])`, pending)
+    assert.match(pending.querySelector(".detail").innerHTML, /partial-marker/)
+    await ui.evaluate(`toggleRecDetail(fixture, store[${JSON.stringify(node)}][0])`, pending)
+    const response = ui.event("llm.response", { index: 9, sessionID: "root", textChars: 100, toolCalls: [], usage: { output_tokens: 25 } })
+    const completed = ui.read(`HarnessExecutions.fromRecord(store[${JSON.stringify(node)}][0], ${JSON.stringify(node)})`)
+    assert.equal(completed.status, "completed")
+    assert.equal(completed.output.textChars, 100)
+    assert.equal(completed.observations.lastReceivedAt, response.receivedAt)
+    assert.doesNotMatch(JSON.stringify(completed.output), /partial-marker/)
+    assert.equal(ui.fetches.length, 1, "a closed card must not refetch until reopened")
   })
 }
 

@@ -71,7 +71,7 @@ const html = await readFile(path.join(root, "public", "index.html"))
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1")
   if (url.pathname === "/") { res.setHeader("Content-Type", "text/html;charset=utf-8"); res.end(html); return }
-  if (["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js"].includes(url.pathname)) {
+  if (["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js", "/execution-records.js"].includes(url.pathname)) {
     res.setHeader("Content-Type", "text/javascript;charset=utf-8")
     res.end(await readFile(path.join(root, "public", url.pathname.slice(1))))
     return
@@ -235,6 +235,20 @@ async function verifyFlowDocs(harness) {
   await screenshot(harness + "-lesson")
   await evaluate(`document.querySelector("[data-tab=records]").click(); selectNode(${JSON.stringify(harness === "codex" ? "c-llm" : "llm")})`)
   checks.push(`${harness}: all ${nodes.length} visible nodes open their explanation and pinned source links`)
+}
+async function verifyExecutionDetails(node, name) {
+  const count = await evaluate(`(store['${node}']??[]).filter(rec=>rec.recordType==='execution').length`)
+  if (!count) return
+  await evaluate(`activeTab='records'; selectNode('${node}'); (()=>{const card=document.querySelector('#nodePanel .rec');if(!card.classList.contains('open'))card.querySelector('.hd').click()})()`)
+  await wait('document.querySelector("#nodePanel .node-execution-detail") != null')
+  assert.equal(await evaluate('document.querySelectorAll("#nodePanel .rec").length'), count)
+  const content = await evaluate('(() => { const body=document.querySelector("#nodePanel .node-execution-detail").cloneNode(true); body.querySelectorAll("details").forEach(d=>d.remove()); return body.textContent })()')
+  for (const label of ["执行信息", "本次输入", "实际处理", "本次结果"]) assert(content.includes(label), `${name}: missing ${label}`)
+  if (["tool", "exec", "c-tool", "c-feedback"].includes(node)) assert(/目标文件|执行命令|涉及文件|外部服务|任务要求|返回内容/.test(content), `${name}: actual task or result must be readable without raw data`)
+  if (node === "sandbox") assert(/允许这一次操作|允许此请求|拒绝这次操作/.test(content), `${name}: native reply codes must be explained`)
+  await evaluate('document.querySelector("#nodePanel .rec").scrollIntoView({block:"start"})')
+  await screenshot(name)
+  checks.push(`${name}: actual inputs/results are directly readable with all technical details closed`)
 }
 try {
   let page
@@ -440,10 +454,18 @@ try {
   const firstModelIndex = await evaluate('execution.entries().findIndex(row=>row.kind === "model-response")')
   await evaluate(`focusExecution(${firstModelIndex})`)
   await wait('document.querySelector("#nodePanel .model-output") != null')
+  assert(await evaluate('(() => { const body=document.querySelector("#nodePanel .node-execution-detail").cloneNode(true); body.querySelectorAll("details").forEach(d=>d.remove()); return body.textContent.includes("最近用户文本") && (body.textContent.includes("回答正文") || body.textContent.includes("提出调用")) })()'), "Model task and response must be readable before opening complete model data")
+  await evaluate('document.querySelector("#nodePanel").scrollTop=0')
+  await screenshot("opencode-readable-model")
+  checks.push("Model record directly shows the captured user text and actual answer/tool proposals before opening complete model data")
+  await evaluate('document.querySelector("#nodePanel .model-extras").open=true')
   assert(await evaluate('document.querySelector("#fn-llm").classList.contains("step-focus") && document.querySelector("#executionEvent").textContent.includes("llm.response")'))
   assert(await evaluate('document.querySelector("#nodePanel .model-output").textContent.includes("工具调用也是") || document.querySelector("#nodePanel .model-output").textContent.includes("工具调用表示模型提出动作")'))
   await evaluate('document.querySelector("#nodePanel .model-output").scrollIntoView({block:"center"})')
   await screenshot("opencode-execution-order")
+  await verifyExecutionDetails("tool", "opencode-tool-execution")
+  await verifyExecutionDetails("exec", "opencode-feedback-execution")
+  await verifyExecutionDetails("sandbox", "opencode-permission-execution")
   const proposal = calls.find(call => call.harness === "opencode" && call.response?.toolUses?.length)
   if (proposal) {
     await evaluate(`focusExecution(execution.entries().findIndex(row=>row.kind === "model-response" && row.index === ${proposal.index}))`)
@@ -463,7 +485,21 @@ try {
   const historyReferences = await evaluate('store.loop.map(rec=>({kind:rec.kind,time:rec.time,index:rec.data.index}))')
   assert(historyReferences.every(rec => rec.kind === "context"))
   assert.equal(historyReferences.length, calls.filter(call => call.harness === "opencode" && call.sessionID === runs.opencode.sessionID).length)
-  checks.push("No associated-material tab or fabricated history executions; actual inputs remain in model call details")
+  await wait('document.querySelector("#nodePanel .history-snapshot h4") != null')
+  assert(await evaluate('document.querySelector("#nodePanel .history-snapshot").textContent.includes("内部读取日志尚未采集")'))
+  assert(await evaluate(`document.querySelector('#nodePanel .history-evidence').textContent.includes(${JSON.stringify(originalPrompt.slice(0, 20))})`))
+  assert(await evaluate('!document.querySelector("#nodePanel .history-message, #nodePanel .history-request, #nodePanel pre") && [...document.querySelectorAll("#nodePanel .history-snapshot h4")].every(h=>["用户要求","助手已有进度","最近工具反馈"].includes(h.textContent))'), "History must follow the node's responsibilities instead of listing all model input items")
+  assert(await evaluate('document.querySelector("#nodePanel .history-snapshot").textContent.length < 1400'), "Default history state must stay concise")
+  const firstHistoryIndex = historyReferences[0].index, latestHistoryIndex = historyReferences.at(-1).index
+  await evaluate('(() => { const picker=document.querySelector("#nodePanel .history-picker"); picker.value="0"; picker.dispatchEvent(new Event("change")) })()')
+  assert(await evaluate(`document.querySelector('#nodePanel .history-source').textContent.includes('请求 #${firstHistoryIndex}')`))
+  await evaluate('(() => { const picker=document.querySelector("#nodePanel .history-picker"); picker.value=String(picker.options.length-1); picker.dispatchEvent(new Event("change")) })()')
+  await evaluate('document.querySelector("#nodePanel").scrollTop=0')
+  await screenshot("opencode-readable-history")
+  await evaluate('document.querySelector("#nodePanel .history-source button").click()')
+  assert(await evaluate(`selectedNode==='llm' && execution.entries().find(row=>row.key===executionSelectedKey)?.index === ${latestHistoryIndex}`))
+  await evaluate('selectNode("loop")')
+  checks.push("History shows only requirement/progress/latest feedback, one selected timepoint, and an exact source link without fabricated executions")
   if (opencodeOnly) {
     assert.equal(await evaluate('execution.entries().filter(row=>row.kind==="model-request" && !row.child).length'), calls.filter(call => call.sessionID === runs.opencode.sessionID).length)
     if (calls.some(call=>call.harness === "opencode" && call.sessionID !== runs.opencode.sessionID)) {
@@ -481,9 +517,11 @@ try {
   assert.equal(await evaluate('document.querySelectorAll("#nodePanel .rec").length'), calls.filter(call => call.harness === "opencode" && call.sessionID === runs.opencode.sessionID).length)
   assert(await evaluate('[...document.querySelectorAll("#nodePanel .rec .hd b")].every(el=>!el.textContent.includes("助手消息状态"))'))
   await wait('document.querySelector("#nodePanel")?.textContent.includes("下载原文")')
+  await evaluate('document.querySelector("#nodePanel .model-extras").open=true')
   assert(await evaluate('document.querySelector("#nodePanel .model-input")?.textContent.includes("请求输入")'))
   assert(await evaluate('[...document.querySelectorAll("#nodePanel .input-message")].some(item=>!item.open && item.querySelector("summary").textContent.includes("system"))'))
   assert(await evaluate('document.querySelector("#nodePanel").textContent.includes("messages")'))
+  assert(await evaluate('document.querySelector("#nodePanel .node-execution-detail")?.textContent.includes("实际处理")'))
   await verifyDownload(calls.find(call => call.harness === "opencode"))
   checks.push("OpenCode browser download equals the captured forwarded API body")
   await evaluate(`document.querySelector('#nodePanel').innerHTML=${JSON.stringify(effortPreviewFixtures)}.map(call=>'<div class="rec open"><div class="detail">'+renderLlmCall(call)+'</div></div>').join(''); populateTemplateSelects(document.querySelector('#nodePanel'))`)
@@ -590,6 +628,7 @@ try {
   assert(reconstructed, "Actual native data must include a response-chain continuation")
   await evaluate(`(()=>{ const rec=store["c-llm"].find(record=>record.kind==="llm" && record.data.index===${reconstructed.index}); document.querySelector(\`[data-record-seq="\${rec.seq}"] .hd\`).click() })()`)
   await wait('document.querySelector("#nodePanel")?.textContent.includes("重建上下文（分析结果，非原始请求）")')
+  await evaluate(`document.querySelector('.template-preview[data-preview-index="${reconstructed.index}"]').closest('.model-extras').open=true`)
   assert.deepEqual(JSON.parse(await evaluate(`requestCache[${reconstructed.index}]`)), reconstructed.request)
   await verifyDownload(reconstructed)
   checks.push("Readable original request and byte-preserving browser download; rebuilt context stays separate")
@@ -607,6 +646,16 @@ try {
   await screenshot("codex-template-preview")
   await screenshot("codex-desktop")
   checks.push("Codex native-trace replay, source labeling and full request panel")
+  await verifyExecutionDetails("c-tool", "codex-tool-execution")
+  await verifyExecutionDetails("c-feedback", "codex-feedback-execution")
+  await verifyExecutionDetails("c-done", "codex-return-execution")
+  await evaluate('activeTab="records"; selectNode("c-context")')
+  await wait('document.querySelector("#nodePanel .history-snapshot h4") != null')
+  assert(await evaluate('document.querySelector("#nodePanel .history-evidence").textContent.includes("不计作读取执行次数")'))
+  assert(await evaluate('!document.querySelector("#nodePanel .history-message, #nodePanel .history-request, #nodePanel .history-snapshot pre")'))
+  await evaluate('document.querySelector("#nodePanel .history-evidence").scrollIntoView({block:"start"})')
+  await screenshot("codex-readable-context")
+  checks.push("Codex context shows concise requirement/progress from a complete associated response chain without exposing payloads as history records")
   }
   const markdown = '# Markdown 排版\n\n支持 **重点**、`行内代码` 和 [源码链接](https://github.com/openai/codex)。\n\n## 请求生命周期\n\n1. 组织上下文\n2. 执行工具\n3. 反馈结果\n\n> 工具结果进入下一次请求。\n\n| 阶段 | 内容 |\n| --- | --- |\n| 输入 | 指令与历史 |\n| 工具 | 文件与命令 |\n\n```js\nconst result = await runTool();\n```\n\n- [x] 完成读取\n- [ ] 等待修改'
   await evaluate('setProcessView("transcript"); document.querySelector("#toggle-flow").click(); document.querySelector("#toggle-details").click(); document.querySelector("#transcript").innerHTML = ""')

@@ -358,7 +358,7 @@ try {
     const nativeModels = await api("/api/models?harness=codex")
     assert(nativeModels.models.some(m => m.value === "fixture/fixture-model"), "Codex model must come from its native TOML")
     assert.deepEqual(nativeModels.models.find(m => m.value === "fixture/fixture-model").reasoningEfforts, ["low", "medium", "high"])
-    for (const asset of ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js"]) {
+    for (const asset of ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js", "/execution-records.js"]) {
       const response = await fetch(base + asset)
       assert(response.ok && response.headers.get("content-type").includes("javascript"), "Browser Markdown assets must be available locally")
       assert((await response.text()).length > 100)

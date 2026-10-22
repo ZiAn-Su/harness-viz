@@ -379,7 +379,7 @@ const llmProxy = createServer(async (req, res) => {
     type: "llm.request",
     source: "proxy", runID: call.runID,
     properties: {
-      index, model: call.model,
+      index, model: call.model, startedAt: call.startedAt,
       protocol: call.protocol, providerID: call.providerID, path: call.path, upstreamOrigin: call.upstreamOrigin,
       systemChars: protocol === "chat" ? (bodyJson?.messages ?? []).filter(m => ["system", "developer"].includes(m.role)).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content ?? "").length), 0)
         : typeof bodyJson?.instructions === "string" ? bodyJson.instructions.length : typeof bodyJson?.system === "string" ? bodyJson.system.length
@@ -435,7 +435,7 @@ const llmProxy = createServer(async (req, res) => {
       type: "llm.response",
       source: "proxy", runID: call.runID,
       properties: {
-        index, ms: call.ms,
+        index, ms: call.ms, endedAt: call.endedAt,
         textChars: call.response?.text?.length ?? 0,
         toolCalls: call.response?.toolCalls ?? [],
         stopReason: call.response?.stopReason ?? null,
@@ -447,9 +447,10 @@ const llmProxy = createServer(async (req, res) => {
   } catch (err) {
     call.error = String(err?.message ?? err)
     call.ms = Date.now() - startedAt
+    call.endedAt = Date.now()
     call.rawResponse = captured
     call.response = protocol === "anthropic" ? parseAnthropicSSE(captured) : summarizeProxyResponse(captured, protocol)
-    broadcast({ id: `llm-${index}-err`, type: "llm.response", source: "proxy", runID: call.runID, properties: { index, ms: call.ms, error: call.error, source: call.source, sessionID: call.sessionID } })
+    broadcast({ id: `llm-${index}-err`, type: "llm.response", source: "proxy", runID: call.runID, properties: { index, ms: call.ms, endedAt: call.endedAt, error: call.error, source: call.source, sessionID: call.sessionID } })
     if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "LLM 代理转发失败: " + call.error }))
   }
@@ -579,7 +580,7 @@ function captureCodexTrace(root, run) {
         calls.set(p.inference_call_id, call)
         llmCalls.push(call)
         broadcast({ ...base, id: `trace-${bundle}-${event.seq}`, type: "llm.request", properties: {
-          index: call.index, model: call.model, source: call.source, sessionID: call.sessionID, turnID: call.turnID,
+          index: call.index, model: call.model, startedAt: call.startedAt, source: call.source, sessionID: call.sessionID, turnID: call.turnID,
           inferenceCallID: call.inferenceCallID, systemChars: (r.instructions ?? "").length,
           messages: r.input?.length ?? null, tools: requestTools(request).names, toolsLocation: requestTools(request).location,
           transport: r.type === "response.create" ? "websocket" : "http-or-logical-request",
@@ -595,7 +596,7 @@ function captureCodexTrace(root, run) {
         call.error = p.error ?? p.reason ?? null
         call.trace.terminal = event
         broadcast({ ...base, id: `trace-${bundle}-${event.seq}`, type: "llm.response", properties: {
-          index: call.index, ms: call.ms, source: call.source, sessionID: call.sessionID,
+          index: call.index, ms: call.ms, endedAt: call.endedAt, terminalType: p.type, source: call.source, sessionID: call.sessionID,
           textChars: call.response.text.length, toolCalls: call.response.toolCalls, usage: call.response.usage, error: call.error,
         } })
       } else {
@@ -856,7 +857,7 @@ const server = createServer(async (req, res) => {
     if (![`${HOST}:${VIZ_PORT}`, `localhost:${VIZ_PORT}`].includes(req.headers.host)) return json(res, { error: "Invalid local Host" }, 403)
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return json(res, { error: "Cross-origin requests are not allowed" }, 403)
     if (req.method === "POST" && !req.headers["content-type"]?.startsWith("application/json")) return json(res, { error: "application/json is required" }, 415)
-    if (req.method === "GET" && ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js"].includes(url.pathname)) {
+    if (req.method === "GET" && ["/vendor/marked.js", "/vendor/purify.js", "/markdown.js", "/flows.js", "/execution-records.js"].includes(url.pathname)) {
       const javascript = await readFile(path.join(ROOT, "public", url.pathname.slice(1)))
       res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "X-Content-Type-Options": "nosniff" })
       res.end(javascript)
