@@ -1,5 +1,6 @@
 // Verify diagram/documentation coverage and source anchors against pinned checkouts.
-// Requires ../opencode and ../codex; does not run CLIs or call models.
+// Requires pinned Git objects in ../opencode and ../codex; HEAD need not match.
+// Read sources from Git without switching or modifying either working tree.
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { readFile } from "node:fs/promises"
@@ -26,9 +27,9 @@ const results = []
 for (const harness of ["opencode", "codex"]) {
   const pin = data.pins[harness]
   const checkout = path.resolve(root, "..", harness)
-  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" }).trim()
-  assert.equal(commit, locks[harness].commit, `${harness} checkout must match versions.json`)
-  assert.equal(pin.commit, commit, `${harness} UI source pin must match the checkout`)
+  const commit = execFileSync("git", ["rev-parse", "--verify", `${locks[harness].commit}^{commit}`], { cwd: checkout, encoding: "utf8" }).trim()
+  assert.equal(commit, locks[harness].commit, `${harness} source object must match versions.json`)
+  assert.equal(pin.commit, commit, `${harness} UI source pin must match the audited source`)
   assert.equal(pin.tag, locks[harness].tag)
   const visible = nodes.filter(id => harness === "codex" ? id.startsWith("c-") : !id.startsWith("c-"))
   const geometry = validateFlowGraph(flows.graphs[harness], flows.size)
@@ -45,7 +46,9 @@ for (const harness of ["opencode", "codex"]) {
       assert(url.pathname.startsWith(prefix), `${node}: source links must use the fixed commit`)
       const file = url.pathname.slice(prefix.length)
       assert(file.startsWith(pin.root), `${node}: unexpected source root`)
-      if (!sourceFiles.has(file)) sourceFiles.set(file, (await readFile(path.join(checkout, file), "utf8")).split(/\r?\n/))
+      if (!sourceFiles.has(file)) sourceFiles.set(file, execFileSync("git", ["show", `${commit}:${file}`], {
+        cwd: checkout, encoding: "utf8", maxBuffer: 8 * 1024 * 1024,
+      }).split(/\r?\n/))
       const range = /^#L(\d+)(?:-L(\d+))?$/.exec(url.hash)
       assert(range, `${node}: source link must include line numbers`)
       const first = Number(range[1]), last = Number(range[2] ?? range[1])

@@ -15,7 +15,11 @@ const raw = await readFile(new URL("../.runtime/events.jsonl", import.meta.url),
 const lines = raw.split(/\r?\n/)
 lines.pop() // A currently-being-written final line is not a committed JSONL record.
 const events = lines.filter(Boolean).map(line => JSON.parse(line)).filter(event => event.runID === process.argv[2] && event.harness === "opencode")
-const root = events.find(event => event.type === "viz.run")?.properties.sessionID
+// Admission now precedes asynchronous session creation. Only explicit native /
+// preparation identity is accepted; do not guess the root from model-call order.
+const root = events.find(event => event.type === "viz.run" && event.properties.sessionID)?.properties.sessionID
+  ?? events.find(event => event.type === "viz.preparation" && event.properties.execution?.output?.sessionID)?.properties.execution.output.sessionID
+  ?? events.find(event => event.type === "session.created" && event.properties.info?.id && !event.properties.info.parentID)?.properties.info.id
 assert(root && events.length, "Recorded run must contain a task with a root session")
 const parents = new Map(), timeline = evidence.createTimeline()
 for (const event of events) {
